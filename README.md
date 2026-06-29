@@ -2,6 +2,73 @@
 
 Local speech-to-text transcription server accelerated by Intel NPU hardware via OpenVINO. Includes a push-to-talk voice dictation client for Wayland desktops.
 
+## Quick Start
+
+```bash
+git clone git@github.com:dmzoneill/whisper-npu-wayland.git
+cd whisper-npu-wayland
+make install        # installs deps, system packages, services, permissions
+make start          # starts whisper-server, whisper-cpp-server, push-to-talk
+```
+
+Download at least one model before first use:
+
+```bash
+mkdir -p ~/.whisper/models && cd ~/.whisper/models
+GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/mecattaf/whisper-small.en-fp16-ov
+cd whisper-small.en-fp16-ov && git lfs pull
+```
+
+Restart the server to pick up the new model:
+
+```bash
+make restart
+```
+
+Verify everything is running:
+
+```bash
+make status         # check service status
+make test           # hit health/model endpoints
+```
+
+## Usage Examples
+
+### Transcribe an audio file
+
+```bash
+curl -X POST http://127.0.0.1:5000/transcribe --data-binary @recording.wav
+# {"text": "This is the transcribed text."}
+```
+
+### Stream transcription (real-time chunks via SSE)
+
+```bash
+curl -N -X POST http://127.0.0.1:5000/transcribe/stream --data-binary @recording.wav
+# data: {"text": "This is "}
+# data: {"text": "the transcribed "}
+# data: {"text": "text."}
+# data: {"done": true, "full_text": "This is the transcribed text."}
+```
+
+### Use a specific model
+
+```bash
+curl http://127.0.0.1:5000/models
+# {"models": ["whisper-small.en-fp16-ov", "whisper-base.en"]}
+
+curl -X POST http://127.0.0.1:5000/transcribe/whisper-base.en --data-binary @recording.wav
+```
+
+### Voice dictation (push-to-talk)
+
+The push-to-talk service starts automatically. By default it uses Right Ctrl:
+
+- **Hold** Right Ctrl for >1.5s — records while held, transcribes on release, types into the focused window
+- **Tap** Right Ctrl quickly — starts recording with live streaming, tap again to stop
+
+Check its logs with `make logs-ptt`.
+
 ## Architecture
 
 ```mermaid
