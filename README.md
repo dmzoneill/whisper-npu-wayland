@@ -7,30 +7,13 @@ Local speech-to-text transcription server accelerated by Intel NPU hardware via 
 ```bash
 git clone git@github.com:dmzoneill/whisper-npu-wayland.git
 cd whisper-npu-wayland
-make install        # installs deps, system packages, services, permissions
+make install        # installs deps, system packages, default model, services, permissions
 make start          # starts whisper-server, whisper-cpp-server, push-to-talk
-```
-
-Download at least one model before first use:
-
-```bash
-mkdir -p ~/.whisper/models && cd ~/.whisper/models
-GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/mecattaf/whisper-small.en-fp16-ov
-cd whisper-small.en-fp16-ov && git lfs pull
-```
-
-Restart the server to pick up the new model:
-
-```bash
-make restart
-```
-
-Verify everything is running:
-
-```bash
 make status         # check service status
 make test           # hit health/model endpoints
 ```
+
+That's it. `make install` downloads the default model (`whisper-small.en-fp16-ov`) automatically. See [Models](#models) below for installing additional models.
 
 ## Usage Examples
 
@@ -309,14 +292,16 @@ make test        # Health check against running servers
 1. **Python packages** — installs from `requirements.txt` plus `aiohttp` and `evdev`
 2. **System packages** — `ydotool`, `pipewire-pulseaudio`, `wtype`, `wl-clipboard`, `xdotool`
 3. **Permissions** — adds your user to the `input` group (for evdev keyboard access)
-4. **Services** — generates and installs four systemd user service files
-5. **Enable** — enables the three main services to start on login
+4. **Default model** — downloads `whisper-small.en-fp16-ov` from HuggingFace if not already present
+5. **Services** — generates and installs four systemd user service files
+6. **Enable** — enables the three main services to start on login
 
 ### Makefile Targets
 
 | Target | Description |
 |--------|-------------|
-| `make install` | Full install: deps + services + permissions |
+| `make install` | Full install: deps + model + services + permissions |
+| `make install-models` | Download the default OpenVINO model |
 | `make start` | Start all services |
 | `make stop` | Stop all services |
 | `make restart` | Restart all services |

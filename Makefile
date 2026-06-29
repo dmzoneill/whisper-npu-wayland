@@ -16,8 +16,11 @@ SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
                  $(SYSTEMD_DIR)/whisper-cpp-server.service \
                  $(SYSTEMD_DIR)/push-to-talk.service
 
+WHISPER_MODELS_DIR := $(HOME)/.whisper/models
+HF_ORG := mecattaf
+
 .PHONY: help install install-python install-system install-services \
-        install-permissions enable start stop restart status \
+        install-permissions install-models enable start stop restart status \
         logs logs-server logs-cpp logs-ptt \
         test uninstall clean
 
@@ -46,7 +49,7 @@ help: ## Show available targets
 # Full install
 # ----------------------------------------------------------------------------
 
-install: install-python install-system install-permissions install-services enable ## Install everything
+install: install-python install-system install-permissions install-models install-services enable ## Install everything
 
 # ----------------------------------------------------------------------------
 # Python dependencies
@@ -73,6 +76,20 @@ install-permissions: ## Add user to input group for evdev access
 	else \
 		sudo usermod -aG input "$(USER)"; \
 		echo "Added $(USER) to input group — log out and back in to apply"; \
+	fi
+
+# ----------------------------------------------------------------------------
+# Models
+# ----------------------------------------------------------------------------
+
+install-models: ## Download default OpenVINO model if not already present
+	@mkdir -p $(WHISPER_MODELS_DIR)
+	@if [ -d "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" ]; then \
+		echo "Model $(WHISPER_MODEL) already present"; \
+	else \
+		echo "Downloading $(WHISPER_MODEL) from $(HF_ORG)..."; \
+		GIT_LFS_SKIP_SMUDGE=1 git clone "https://huggingface.co/$(HF_ORG)/$(WHISPER_MODEL)" "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" && \
+		cd "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" && git lfs pull; \
 	fi
 
 # ----------------------------------------------------------------------------
