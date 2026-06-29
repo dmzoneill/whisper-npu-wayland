@@ -9,7 +9,7 @@ WHISPER_MODEL      ?= whisper-small.en-fp16-ov
 WHISPER_CPP_PORT   ?= 5001
 WHISPER_CPP_DEVICE ?= NPU
 
-SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool
+SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool git-lfs
 
 SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
                  $(SYSTEMD_DIR)/whisper-cpp-server.service \
