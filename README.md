@@ -202,7 +202,7 @@ python3 push-to-talk.py --key KEY_RIGHTCTRL --backend whisper-cpp --stream-inter
 
 ```mermaid
 graph LR
-    subgraph systemd --user
+    subgraph "systemd --user"
         WS[whisper-server.service<br/>server-native.py :5000]
         WL[whisper-legacy.service<br/>server.py :5000]
         WC[whisper-cpp-server.service<br/>server-whisper-cpp.py :5001]
