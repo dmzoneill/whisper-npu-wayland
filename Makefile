@@ -62,6 +62,7 @@ install-python: ## Install Python packages
 
 install-system: ## Install system packages via dnf (requires sudo)
 	sudo dnf install -y $(SYSTEM_PKGS)
+	sudo systemctl enable --now ydotool.service
 
 # ----------------------------------------------------------------------------
 # User permissions
