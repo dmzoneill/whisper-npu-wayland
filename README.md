@@ -380,7 +380,7 @@ curl http://127.0.0.1:5001/health
 
 ## Hardware
 
-Tested on ASUS Zenbook DUO UX8406 with Intel Core Ultra 9 185H (integrated NPU).
+Tested on Lenovo ThinkPad P1 Gen 7 with Intel Core Ultra 7 165H (Meteor Lake NPU).
 
 Required device files:
 - `/dev/accel/accel0` — Intel NPU
