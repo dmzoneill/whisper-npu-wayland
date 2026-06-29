@@ -2,4 +2,4 @@ openvino>=2024.5.0
 openvino-tokenizers>=2024.5.0
 openvino-genai>=2024.5.0
 librosa==0.10.2.post1
-flask==3.1.0
+flask==3.1.3
