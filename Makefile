@@ -16,7 +16,7 @@ SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
                  $(SYSTEMD_DIR)/push-to-talk.service
 
 WHISPER_MODELS_DIR := $(HOME)/.whisper/models
-HF_ORG := mecattaf
+HF_ORG := OpenVINO
 
 .PHONY: help install install-python install-system install-services \
         install-permissions install-models enable start stop restart status \

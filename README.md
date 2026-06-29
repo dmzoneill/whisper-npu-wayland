@@ -314,7 +314,7 @@ To install additional models:
 ```bash
 cd ~/.whisper/models
 for model in whisper-small.en-fp16-ov whisper-base.en whisper-tiny.en; do
-    GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/mecattaf/$model
+    GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/OpenVINO/$model
     cd $model && git lfs pull && cd ..
 done
 ```
