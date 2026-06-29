@@ -12,7 +12,6 @@ WHISPER_CPP_DEVICE ?= NPU
 SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool
 
 SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
-                 $(SYSTEMD_DIR)/whisper-legacy.service \
                  $(SYSTEMD_DIR)/whisper-cpp-server.service \
                  $(SYSTEMD_DIR)/push-to-talk.service
 
@@ -42,8 +41,6 @@ help: ## Show available targets
 	@echo "  WHISPER_MODEL        Model for server-native     [$(WHISPER_MODEL)]"
 	@echo "  WHISPER_CPP_DEVICE   Device for whisper.cpp      [$(WHISPER_CPP_DEVICE)]"
 	@echo "  WHISPER_CPP_PORT     Port for whisper.cpp        [$(WHISPER_CPP_PORT)]"
-	@echo ""
-	@echo "whisper-server and whisper-legacy both bind port 5000; only run one."
 
 # ----------------------------------------------------------------------------
 # Full install
@@ -105,7 +102,6 @@ $(SYSTEMD_DIR)/whisper-server.service:
 		'[Unit]' \
 		'Description=Whisper Speech-to-Text Server (OpenVINO GenAI)' \
 		'After=basic.target' \
-		'Conflicts=whisper-legacy.service' \
 		'' \
 		'[Service]' \
 		'Type=simple' \
@@ -113,24 +109,6 @@ $(SYSTEMD_DIR)/whisper-server.service:
 		'ExecStart=$(PYTHON) $(PROJECT_DIR)/server-native.py' \
 		'Environment=WHISPER_DEVICE=$(WHISPER_DEVICE)' \
 		'Environment=WHISPER_MODEL=$(WHISPER_MODEL)' \
-		'Restart=on-failure' \
-		'RestartSec=5' \
-		'' \
-		'[Install]' \
-		'WantedBy=default.target' > $@
-
-$(SYSTEMD_DIR)/whisper-legacy.service:
-	@mkdir -p $(SYSTEMD_DIR)
-	@printf '%s\n' \
-		'[Unit]' \
-		'Description=Whisper Speech-to-Text Server (Legacy)' \
-		'After=basic.target' \
-		'Conflicts=whisper-server.service' \
-		'' \
-		'[Service]' \
-		'Type=simple' \
-		'WorkingDirectory=$(PROJECT_DIR)' \
-		'ExecStart=$(PYTHON) $(PROJECT_DIR)/server.py' \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'' \
@@ -190,7 +168,6 @@ start: ## Start services
 stop: ## Stop all services
 	-systemctl --user stop push-to-talk.service
 	-systemctl --user stop whisper-server.service
-	-systemctl --user stop whisper-legacy.service
 	-systemctl --user stop whisper-cpp-server.service
 
 restart: stop start ## Restart all services
@@ -198,9 +175,6 @@ restart: stop start ## Restart all services
 status: ## Show service status
 	@echo "=== whisper-server (server-native.py :5000) ==="
 	@systemctl --user status whisper-server.service --no-pager 2>/dev/null || echo "  not installed"
-	@echo ""
-	@echo "=== whisper-legacy (server.py :5000) ==="
-	@systemctl --user status whisper-legacy.service --no-pager 2>/dev/null || echo "  not installed"
 	@echo ""
 	@echo "=== whisper-cpp-server (server-whisper-cpp.py :$(WHISPER_CPP_PORT)) ==="
 	@systemctl --user status whisper-cpp-server.service --no-pager 2>/dev/null || echo "  not installed"
@@ -243,7 +217,6 @@ test: ## Health check against running servers
 
 uninstall: stop ## Stop and remove all services
 	-systemctl --user disable whisper-server.service 2>/dev/null
-	-systemctl --user disable whisper-legacy.service 2>/dev/null
 	-systemctl --user disable whisper-cpp-server.service 2>/dev/null
 	-systemctl --user disable push-to-talk.service 2>/dev/null
 	rm -f $(SERVICE_FILES)

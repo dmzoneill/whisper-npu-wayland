@@ -63,7 +63,6 @@ graph TB
 
     subgraph Server Layer
         SN[server-native.py<br/>OpenVINO GenAI<br/>Port 5000]
-        SL[server.py<br/>OpenVINO GenAI Legacy<br/>Port 5000]
         SC[server-whisper-cpp.py<br/>whisper.cpp ctypes<br/>Port 5001]
     end
 
@@ -86,11 +85,9 @@ graph TB
     PTT -->|HTTP POST| SN
     PTT -->|HTTP POST| SC
     CURL -->|HTTP POST| SN
-    CURL -->|HTTP POST| SL
     CURL -->|HTTP POST| SC
 
     SN --> OV
-    SL --> OV
     SC --> WC
     WC --> OVE
 
@@ -104,7 +101,6 @@ graph TB
 
     style SN fill:#2d6a4f,color:#fff
     style SC fill:#2d6a4f,color:#fff
-    style SL fill:#40916c,color:#fff
     style PTT fill:#1d3557,color:#fff
     style NPU fill:#e76f51,color:#fff
 ```
@@ -213,10 +209,6 @@ Environment variables:
 
 Models are loaded from `~/.whisper/models/` in OpenVINO format.
 
-### server.py (Legacy)
-
-Minimal OpenVINO GenAI server. Same endpoints as server-native.py minus streaming. Hardcoded to NPU device with `whisper-small` as default model.
-
 ### server-whisper-cpp.py
 
 Whisper.cpp server using ctypes bindings to `libwhisper.so`. Supports optional OpenVINO encoder acceleration on NPU.
@@ -254,21 +246,18 @@ python3 push-to-talk.py --key KEY_RIGHTCTRL --backend whisper-cpp --stream-inter
 graph LR
     subgraph "systemd --user"
         WS[whisper-server.service<br/>server-native.py :5000]
-        WL[whisper-legacy.service<br/>server.py :5000]
         WC[whisper-cpp-server.service<br/>server-whisper-cpp.py :5001]
         PT[push-to-talk.service]
     end
 
     PT -->|Wants=| WC
-    WS ---|Conflicts| WL
 
     style WS fill:#2d6a4f,color:#fff
     style WC fill:#2d6a4f,color:#fff
-    style WL fill:#40916c,color:#fff
     style PT fill:#1d3557,color:#fff
 ```
 
-`whisper-server` and `whisper-legacy` both bind port 5000 — systemd `Conflicts=` ensures only one runs at a time. `push-to-talk` depends on `whisper-cpp-server` by default.
+`push-to-talk` depends on `whisper-cpp-server` by default.
 
 ## Installation
 
@@ -328,7 +317,7 @@ make install WHISPER_DEVICE=CPU WHISPER_MODEL=whisper-base.en WHISPER_CPP_PORT=5
 
 ## Models
 
-### OpenVINO Models (for server.py / server-native.py)
+### OpenVINO Models (for server-native.py)
 
 Stored in `~/.whisper/models/`. Download from HuggingFace:
 
@@ -405,9 +394,9 @@ curl http://127.0.0.1:5001/health
 
 | Package | Version | Used By |
 |---------|---------|---------|
-| openvino | >= 2024.5.0 | server.py, server-native.py |
-| openvino-genai | >= 2024.5.0 | server.py, server-native.py |
-| openvino-tokenizers | >= 2024.5.0 | server.py, server-native.py |
+| openvino | >= 2024.5.0 | server-native.py |
+| openvino-genai | >= 2024.5.0 | server-native.py |
+| openvino-tokenizers | >= 2024.5.0 | server-native.py |
 | librosa | 0.10.2.post1 | All servers |
 | flask | 3.1.0 | All servers |
 | aiohttp | latest | push-to-talk.py |
