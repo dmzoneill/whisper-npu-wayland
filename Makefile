@@ -62,6 +62,13 @@ install-python: ## Install Python packages
 
 install-system: ## Install system packages via dnf (requires sudo)
 	sudo dnf install -y $(SYSTEM_PKGS)
+	sudo mkdir -p /etc/systemd/system/ydotool.service.d
+	@printf '%s\n' \
+		'[Service]' \
+		'RestartSec=3' \
+		"ExecStartPost=/bin/bash -c 'sleep 0.5 && chmod 666 /tmp/.ydotool_socket && (mkdir -p /run/user/$$(id -u) && ln -sf /tmp/.ydotool_socket /run/user/$$(id -u)/.ydotool_socket || true)'" \
+		| sudo tee /etc/systemd/system/ydotool.service.d/socket-permissions.conf > /dev/null
+	sudo systemctl daemon-reload
 	sudo systemctl enable --now ydotool.service
 
 # ----------------------------------------------------------------------------
