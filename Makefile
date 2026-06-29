@@ -9,7 +9,10 @@ WHISPER_MODEL      ?= whisper-small.en-fp16-ov
 WHISPER_CPP_PORT   ?= 5001
 WHISPER_CPP_DEVICE ?= NPU
 
-SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool git-lfs
+SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool git-lfs cmake gcc-c++
+
+WHISPER_CPP_VERSION ?= v1.7.4
+WHISPER_CPP_SRC     := $(PROJECT_DIR)/.whisper-cpp
 
 SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
                  $(SYSTEMD_DIR)/whisper-cpp-server.service \
@@ -18,9 +21,9 @@ SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
 WHISPER_MODELS_DIR := $(HOME)/.whisper/models
 HF_ORG := OpenVINO
 
-.PHONY: help install install-python install-system install-services \
-        install-permissions install-models enable start stop restart status \
-        logs logs-server logs-cpp logs-ptt \
+.PHONY: help install install-python install-system install-whisper-cpp \
+        install-services install-permissions install-models enable start \
+        stop restart status logs logs-server logs-cpp logs-ptt \
         test uninstall clean
 
 .DEFAULT_GOAL := help
@@ -46,7 +49,7 @@ help: ## Show available targets
 # Full install
 # ----------------------------------------------------------------------------
 
-install: install-python install-system install-permissions install-models install-services enable ## Install everything
+install: install-python install-system install-whisper-cpp install-permissions install-models install-services enable start ## Install everything
 
 # ----------------------------------------------------------------------------
 # Python dependencies
@@ -69,7 +72,29 @@ install-system: ## Install system packages via dnf (requires sudo)
 		"ExecStartPost=/bin/bash -c 'sleep 0.5 && chmod 666 /tmp/.ydotool_socket && (mkdir -p /run/user/$$(id -u) && ln -sf /tmp/.ydotool_socket /run/user/$$(id -u)/.ydotool_socket || true)'" \
 		| sudo tee /etc/systemd/system/ydotool.service.d/socket-permissions.conf > /dev/null
 	sudo systemctl daemon-reload
-	sudo systemctl enable --now ydotool.service
+	sudo systemctl enable ydotool.service
+	sudo systemctl restart ydotool.service
+
+# ----------------------------------------------------------------------------
+# whisper.cpp (libwhisper.so)
+# ----------------------------------------------------------------------------
+
+install-whisper-cpp: ## Build and install libwhisper.so from source
+	@if [ -f /usr/local/lib/libwhisper.so ]; then \
+		echo "libwhisper.so already installed"; \
+	else \
+		echo "Building whisper.cpp $(WHISPER_CPP_VERSION)..."; \
+		git clone --depth 1 --branch $(WHISPER_CPP_VERSION) https://github.com/ggerganov/whisper.cpp.git $(WHISPER_CPP_SRC) && \
+		cmake -B $(WHISPER_CPP_SRC)/build -S $(WHISPER_CPP_SRC) \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DWHISPER_OPENVINO=ON \
+			-DOpenVINO_DIR=/usr/local/lib64/python3.14/site-packages/openvino/cmake && \
+		cmake --build $(WHISPER_CPP_SRC)/build --config Release -j$$(nproc) && \
+		sudo cmake --install $(WHISPER_CPP_SRC)/build && \
+		sudo ldconfig && \
+		rm -rf $(WHISPER_CPP_SRC) && \
+		echo "libwhisper.so installed"; \
+	fi
 
 # ----------------------------------------------------------------------------
 # User permissions
@@ -152,6 +177,7 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 		'[Service]' \
 		'Type=simple' \
 		'Environment=XDG_SESSION_TYPE=wayland' \
+		'ExecStartPre=/bin/bash -c '"'"'i=0; while [ $$i -lt 60 ]; do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && exit 0; sleep 1; i=$$((i+1)); done; echo whisper-server not ready after 60s; exit 1'"'"'' \
 		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino' \
 		'Restart=on-failure' \
 		'RestartSec=3' \
@@ -171,6 +197,8 @@ enable: ## Enable services (whisper-server, whisper-cpp-server, push-to-talk)
 start: ## Start services
 	systemctl --user start whisper-server.service
 	systemctl --user start whisper-cpp-server.service
+	@echo "Waiting for whisper-server to load model..."
+	@for i in $$(seq 1 60); do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && break; sleep 1; done
 	systemctl --user start push-to-talk.service
 
 stop: ## Stop all services
@@ -191,7 +219,8 @@ status: ## Show service status
 	@systemctl --user status push-to-talk.service --no-pager 2>/dev/null || echo "  not installed"
 	@echo ""
 	@echo "=== ydotoold ==="
-	@pgrep -a ydotoold || echo "  not running"
+	@systemctl status ydotool.service --no-pager 2>/dev/null || echo "  not installed"
+	@ls -la /run/user/$$(id -u)/.ydotool_socket 2>/dev/null || echo "  socket not found at /run/user/$$(id -u)/.ydotool_socket"
 
 # ----------------------------------------------------------------------------
 # Logs

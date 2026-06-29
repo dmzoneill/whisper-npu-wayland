@@ -1,0 +1,3 @@
+.whisper-cpp/
+__pycache__/
+*.pyc

@@ -37,6 +37,10 @@ class ModelManager:
         return [d for d in os.listdir(self.models_dir)
                 if os.path.isdir(os.path.join(self.models_dir, d)) and not d.startswith('.')]
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "model": model_manager.default_model})
+
 @app.route("/models", methods=["GET"])
 def list_models():
     return jsonify({"models": model_manager.list_models()})
