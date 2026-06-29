@@ -1,209 +1,387 @@
-# whisper-npu-server
+# Whisper NPU Server
 
-A high-performance speech transcription server leveraging Intel NPU acceleration. This fork extends the original project with enhanced organization, error handling, and user-specific model management.
+Local speech-to-text transcription server accelerated by Intel NPU hardware via OpenVINO. Includes a push-to-talk voice dictation client for Wayland desktops.
 
-## Setup
+## Architecture
 
-The server uses a user-specific directory structure for model storage, making it particularly suitable for Fedora Silverblue's immutable nature:
+```mermaid
+graph TB
+    subgraph Client Layer
+        PTT[push-to-talk.py<br/>Voice Dictation Client]
+        CURL[curl / HTTP Client]
+    end
+
+    subgraph Server Layer
+        SN[server-native.py<br/>OpenVINO GenAI<br/>Port 5000]
+        SL[server.py<br/>OpenVINO GenAI Legacy<br/>Port 5000]
+        SC[server-whisper-cpp.py<br/>whisper.cpp ctypes<br/>Port 5001]
+    end
+
+    subgraph Inference Layer
+        OV[OpenVINO GenAI<br/>WhisperPipeline]
+        WC[libwhisper.so<br/>whisper.cpp C Library]
+        OVE[OpenVINO Encoder<br/>NPU Acceleration]
+    end
+
+    subgraph Hardware
+        NPU[Intel NPU<br/>/dev/accel/accel0]
+        CPU[CPU Fallback]
+    end
+
+    subgraph Models
+        OVM[(~/.whisper/models/<br/>OpenVINO Format)]
+        GGML[(~/.cache/whisper/<br/>GGML Format)]
+    end
+
+    PTT -->|HTTP POST| SN
+    PTT -->|HTTP POST| SC
+    CURL -->|HTTP POST| SN
+    CURL -->|HTTP POST| SL
+    CURL -->|HTTP POST| SC
+
+    SN --> OV
+    SL --> OV
+    SC --> WC
+    WC --> OVE
+
+    OV --> NPU
+    OVE --> NPU
+    OV -.-> CPU
+    WC -.-> CPU
+
+    OV --> OVM
+    WC --> GGML
+
+    style SN fill:#2d6a4f,color:#fff
+    style SC fill:#2d6a4f,color:#fff
+    style SL fill:#40916c,color:#fff
+    style PTT fill:#1d3557,color:#fff
+    style NPU fill:#e76f51,color:#fff
+```
+
+## Data Flow
+
+### Batch Transcription
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Flask Server
+    participant L as librosa
+    participant P as WhisperPipeline
+    participant N as Intel NPU
+
+    C->>S: POST /transcribe (WAV audio)
+    S->>L: Load audio bytes
+    L-->>S: float32 array @ 16kHz
+    S->>P: pipeline.generate(audio)
+    P->>N: Inference on NPU
+    N-->>P: Token sequence
+    P-->>S: Transcribed text
+    S-->>C: {"text": "..."}
+```
+
+### Streaming Transcription (server-native.py)
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant S as Flask Server
+    participant Q as Queue
+    participant T as Inference Thread
+    participant N as Intel NPU
+
+    C->>S: POST /transcribe/stream (WAV audio)
+    S->>T: Start inference thread
+    T->>N: pipeline.generate(audio, streamer=callback)
+
+    loop Token chunks
+        N-->>T: Text chunk
+        T->>Q: Push chunk
+        Q-->>S: Read chunk
+        S-->>C: SSE: data: {"text": "chunk"}
+    end
+
+    T->>Q: Push None (done)
+    S-->>C: SSE: data: {"done": true, "full_text": "..."}
+```
+
+### Push-to-Talk Voice Dictation
+
+```mermaid
+sequenceDiagram
+    participant K as Keyboard (evdev)
+    participant PTT as push-to-talk.py
+    participant R as parec (PipeWire)
+    participant S as Whisper Server
+    participant Y as ydotool / wtype
+
+    Note over K,Y: Hold Mode (key held > 1.5s)
+    K->>PTT: Key down
+    PTT->>R: Start recording
+    K->>PTT: Key up
+    PTT->>R: Stop recording
+    R-->>PTT: WAV audio
+    PTT->>S: POST /transcribe
+    S-->>PTT: {"text": "..."}
+    PTT->>Y: Type text into focused window
+
+    Note over K,Y: Toggle Mode (quick tap < 1.5s)
+    K->>PTT: Tap (key down + up)
+    PTT->>R: Start recording
+
+    loop Every 3s
+        PTT->>S: POST /transcribe/stream (audio so far)
+        S-->>PTT: {"text": "partial..."}
+        PTT->>Y: Diff and type new text
+    end
+
+    K->>PTT: Tap again
+    PTT->>R: Stop recording
+    PTT->>S: POST /transcribe/stream (final audio)
+    S-->>PTT: {"text": "final result"}
+    PTT->>Y: Backspace diff + type correction
+```
+
+## Servers
+
+### server-native.py (Primary)
+
+OpenVINO GenAI server with batch and streaming transcription.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/models` | GET | List available models |
+| `/transcribe` | POST | Batch transcription (default model) |
+| `/transcribe/<model>` | POST | Batch transcription (named model) |
+| `/transcribe/stream` | POST | SSE streaming transcription (default model) |
+| `/transcribe/stream/<model>` | POST | SSE streaming transcription (named model) |
+
+Environment variables:
+- `WHISPER_DEVICE` — inference device: `NPU`, `CPU`, `GPU` (default: `NPU`)
+- `WHISPER_MODEL` — default model name (default: `whisper-small.en-fp16-ov`)
+
+Models are loaded from `~/.whisper/models/` in OpenVINO format.
+
+### server.py (Legacy)
+
+Minimal OpenVINO GenAI server. Same endpoints as server-native.py minus streaming. Hardcoded to NPU device with `whisper-small` as default model.
+
+### server-whisper-cpp.py
+
+Whisper.cpp server using ctypes bindings to `libwhisper.so`. Supports optional OpenVINO encoder acceleration on NPU.
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/transcribe` | POST | Batch transcription |
+| `/transcribe/stream` | POST | Transcribe last 30s of audio |
+| `/health` | GET | Health check |
+
+```
+python3 server-whisper-cpp.py --port 5001 --model ~/.cache/whisper/ggml-base.bin --device NPU
+```
+
+Models are GGML format stored in `~/.cache/whisper/`. If an OpenVINO encoder XML file exists alongside the model (`*-encoder-openvino.xml`), it is loaded for NPU acceleration; otherwise inference falls back to CPU.
+
+## Push-to-Talk Client
+
+Desktop voice dictation client for GNOME/Wayland. Listens for a hotkey via evdev, records audio through PipeWire, sends it to a whisper server, and types the result into the focused window.
+
+```
+python3 push-to-talk.py --key KEY_RIGHTCTRL --backend whisper-cpp --stream-interval 3.0
+```
+
+**Two modes of operation:**
+
+- **Hold mode** — hold the key for >1.5 seconds. Audio is recorded while held, transcribed on release, and typed as a single block.
+- **Toggle mode** — quick tap (<1.5s). Recording starts immediately with live incremental transcription every few seconds. Tap again to finalize. Uses a diff algorithm to backspace and retype only the changed suffix when the model corrects earlier words.
+
+**Typing backends** (tried in order on Wayland): `ydotool` → `wtype` → `wl-copy` (clipboard fallback). On X11: `xdotool`.
+
+## Service Architecture
+
+```mermaid
+graph LR
+    subgraph systemd --user
+        WS[whisper-server.service<br/>server-native.py :5000]
+        WL[whisper-legacy.service<br/>server.py :5000]
+        WC[whisper-cpp-server.service<br/>server-whisper-cpp.py :5001]
+        PT[push-to-talk.service]
+    end
+
+    PT -->|Wants=| WC
+    WS ---|Conflicts| WL
+
+    style WS fill:#2d6a4f,color:#fff
+    style WC fill:#2d6a4f,color:#fff
+    style WL fill:#40916c,color:#fff
+    style PT fill:#1d3557,color:#fff
+```
+
+`whisper-server` and `whisper-legacy` both bind port 5000 — systemd `Conflicts=` ensures only one runs at a time. `push-to-talk` depends on `whisper-cpp-server` by default.
+
+## Installation
+
+### Prerequisites
+
+- Linux (Fedora) with Intel Core Ultra processor (NPU)
+- Device access: `/dev/accel/accel0` (NPU), `/dev/dri` (GPU)
+- Python 3
+
+### Quick Start
 
 ```bash
-# Create the whisper directory structure (server will also create this automatically)
-mkdir -p ~/.whisper/models
-cd ~/.whisper/models
+make install     # Install everything: Python deps, system packages, permissions, services
+make start       # Start whisper-server, whisper-cpp-server, and push-to-talk
+make status      # Check service status
+make test        # Health check against running servers
 ```
 
-```fish
-for model in whisper-medium.en whisper-small.en whisper-base.en whisper-tiny.en whisper-large-v3 whisper-small whisper-base whisper-tiny
-    GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/mecattaf/$model
-    cd $model
-    git lfs pull
-    cd ..
-end
-```
+### What `make install` Does
 
-## Container Management
+1. **Python packages** — installs from `requirements.txt` plus `aiohttp` and `evdev`
+2. **System packages** — `ydotool`, `pipewire-pulseaudio`, `wtype`, `wl-clipboard`, `xdotool`
+3. **Permissions** — adds your user to the `input` group (for evdev keyboard access)
+4. **Services** — generates and installs four systemd user service files
+5. **Enable** — enables the three main services to start on login
+
+### Makefile Targets
+
+| Target | Description |
+|--------|-------------|
+| `make install` | Full install: deps + services + permissions |
+| `make start` | Start all services |
+| `make stop` | Stop all services |
+| `make restart` | Restart all services |
+| `make status` | Show service and ydotoold status |
+| `make logs` | Show recent logs for all services |
+| `make test` | Curl health checks |
+| `make uninstall` | Stop, disable, and remove services |
+| `make clean` | Remove downloaded models (prompts first) |
+
+### Configuration
+
+Override defaults at install time:
 
 ```bash
-# Build the container
-podman pull ghcr.io/mecattaf/whisper-npu-server:latest
-
-# Run in development mode
-podman run -d \
-    --name whisper-server \
-    -v $HOME/.whisper/models:/root/.whisper/models:Z \
-    -p 8009:5000 \
-    --security-opt seccomp=unconfined \
-    --ipc=host \
-    --group-add keep-groups \
-    --device=/dev/dri \
-    --device=/dev/accel/accel0 \
-    ghcr.io/mecattaf/whisper-npu-server:latest
-
-# Simple transcription test
-curl --data-binary @audio.wav -X POST http://localhost:8009/transcribe
+make install WHISPER_DEVICE=CPU WHISPER_MODEL=whisper-base.en WHISPER_CPP_PORT=5002
 ```
 
-## First-Time Model Initialization
-
-Before running the server, it's recommended to initialize all models first. This one-time process may take several minutes as each model needs to be loaded into the NPU:
-
-```bash
-cd ~/mecattaf/whisper-npu-server/ && \
-podman run -it --rm \
-    -v $HOME/.whisper/models:/root/.whisper/models:Z \
-    -v $PWD:/src/dictation:Z \
-    --security-opt seccomp=unconfined \
-    --ipc=host \
-    --device=/dev/dri \
-    --device=/dev/accel/accel0 \
-    ghcr.io/mecattaf/whisper-npu-server:latest \
-    python3 -c "
-import openvino_genai
-import librosa
-import os
-
-models = ['whisper-tiny.en', 'whisper-base.en', 'whisper-small.en', 
-          'whisper-medium.en', 'whisper-tiny', 'whisper-base', 
-          'whisper-small', 'whisper-medium', 'whisper-large-v3']
-
-audio_path = '/src/dictation/courtroom.wav'
-speech, _ = librosa.load(audio_path, sr=16000)
-
-for model_name in models:
-    try:
-        print(f'\n=== Testing {model_name} ===')
-        model_path = os.path.join('/root/.whisper/models', model_name)
-        print('Loading model...')
-        pipeline = openvino_genai.WhisperPipeline(str(model_path), device='NPU')
-        print('Model loaded!')
-        print('Generating transcription...')
-        result = pipeline.generate(speech)
-        print(f'Transcription result for {model_name}:', result)
-    except Exception as e:
-        print(f'Error with {model_name}:', str(e))
-"
-```
-This command will:
-- Load each available model into the NPU
-- Test transcription with each model using a sample audio file
-- Report success or any errors for each model
-
-The first-time initialization is important as it ensures all models are properly loaded and functional. Subsequent model loads will be faster once they've been initialized.
-
-## Systemd Integration
-
-The server can be automatically started using systemd user services, making it readily available for desktop integration with tools like Sway:
-
-```bash
-# Generate and enable systemd service
-podman generate systemd whisper-server > $HOME/.config/systemd/user/whisper-server.service
-systemctl --user daemon-reload
-systemctl --user enable whisper-server.service
-```
-
-## Starting the service if using `mecattaf/dots-zen`
-
-The systemd service will already be present in dotfiles so we will just have to run:
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now container-whisper-npu
-```
-This will enable the service, which can now be started by swaywm automatically on boot.
-
-## Hardware Requirements
-
-Tested and optimized for the ASUS Zenbook DUO UX8406 with Intel® Core™ Ultra 9 185H processor. The server utilizes the integrated Intel NPU for efficient model inference.
-
-## Features
-
-The server provides real-time speech transcription using OpenVINO-optimized Whisper models. It automatically manages model storage in the user's home directory, making it easy to persist models across container rebuilds and system updates. The implementation focuses on simplicity and reliability, with comprehensive error handling and logging.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WHISPER_DEVICE` | `NPU` | OpenVINO device for server-native |
+| `WHISPER_MODEL` | `whisper-small.en-fp16-ov` | Default model for server-native |
+| `WHISPER_CPP_DEVICE` | `NPU` | OpenVINO device for whisper.cpp |
+| `WHISPER_CPP_PORT` | `5001` | Port for whisper.cpp server |
 
 ## Models
 
-The server stores models in `~/.whisper/models/` in your home directory. This location is automatically created when the server starts. The server supports various Whisper models including:
+### OpenVINO Models (for server.py / server-native.py)
 
-whisper-tiny.en through whisper-large-v3 models are supported, with whisper-medium.en being the default choice. The complete model list includes both English-specific and multilingual variants:
-
-For English-only use:
-- whisper-tiny.en (fastest)
-- whisper-base.en
-- whisper-small.en
-- whisper-medium.en (default, recommended)
-
-For multilingual support:
-- whisper-tiny
-- whisper-base
-- whisper-small
-- whisper-medium
-- whisper-large-v3
-``
-
-## API Response Format
-
-The server provides clean, straightforward JSON responses:
-
-Success response:
-```json
-{
-    "text": "transcribed text here"
-}
-```
-
-Error response:
-```json
-{
-    "error": "error description here"
-}
-```
-
-## Testing and Debugging
-
-When running the server for the first time, the initial model loading may take longer as the NPU initializes. To test the setup and verify NPU functionality:
+Stored in `~/.whisper/models/`. Download from HuggingFace:
 
 ```bash
-# Test model loading and transcription directly
-cd ~/mecattaf/whisper-npu-server/
-podman run -it --rm \
-    -v $HOME/.whisper/models:/root/.whisper/models:Z \
-    -v $PWD:/src/dictation:Z \
-    --security-opt seccomp=unconfined \
-    --ipc=host \
-    --device=/dev/dri \
-    --device=/dev/accel/accel0 \
-    ghcr.io/mecattaf/whisper-npu-server:latest \
-    python3 -c "
-import openvino_genai
-import librosa
-import os
-
-print('Starting test...')
-print('Loading model...')
-model_path = os.path.join('/root/.whisper/models', 'whisper-medium.en')
-pipeline = openvino_genai.WhisperPipeline(str(model_path), device='NPU')
-print('Model loaded!')
-
-print('Loading audio...')
-audio_path = '/src/dictation/courtroom.wav'
-speech, _ = librosa.load(audio_path, sr=16000)
-print('Audio loaded!')
-
-print('Generating transcription...')
-result = pipeline.generate(speech)
-print('Transcription result:', result)
-"
-Note: The first time you load a model, it may take 30-60 seconds as the NPU initializes. Subsequent loads should be faster. Each model needs to be initialized separately the first time it's used.
-For real-time transcription testing after server startup:
+cd ~/.whisper/models
+for model in whisper-small.en-fp16-ov whisper-base.en whisper-tiny.en; do
+    GIT_LFS_SKIP_SMUDGE=1 git clone https://huggingface.co/mecattaf/$model
+    cd $model && git lfs pull && cd ..
+done
 ```
 
-# List available models
-curl http://localhost:8009/models
+Available models: `whisper-tiny`, `whisper-base`, `whisper-small`, `whisper-medium`, `whisper-large-v3` (and `.en` variants).
 
-# Test transcription with default model (whisper-medium.en)
-curl --data-binary @audio.wav -X POST http://localhost:8009/transcribe
+### GGML Models (for server-whisper-cpp.py)
 
-# Test transcription with specific model
-curl --data-binary @audio.wav -X POST http://localhost:8009/transcribe/whisper-medium.en
+Stored in `~/.cache/whisper/`. Download:
 
-## Acknowledgments
+```bash
+mkdir -p ~/.cache/whisper
+curl -L -o ~/.cache/whisper/ggml-base.bin \
+    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+```
 
-This project is based on the original work by [ellenhp](https://github.com/ellenhp) who created the initial implementation for the ThinkPad T14. Modified for the ASUS Zenbook DUO with reorganized file structure and enhanced error handling.
+## API Usage
+
+### Batch Transcription
+
+```bash
+curl -X POST http://127.0.0.1:5000/transcribe \
+    --data-binary @audio.wav
+```
+
+```json
+{"text": "The transcribed text appears here."}
+```
+
+### Streaming Transcription (SSE)
+
+```bash
+curl -N -X POST http://127.0.0.1:5000/transcribe/stream \
+    --data-binary @audio.wav
+```
+
+```
+data: {"text": "The "}
+data: {"text": "transcribed "}
+data: {"text": "text "}
+data: {"done": true, "full_text": "The transcribed text appears here."}
+```
+
+### List Models
+
+```bash
+curl http://127.0.0.1:5000/models
+```
+
+```json
+{"models": ["whisper-small.en-fp16-ov", "whisper-base.en"]}
+```
+
+### Health Check (whisper.cpp)
+
+```bash
+curl http://127.0.0.1:5001/health
+```
+
+```json
+{"status": "ok", "backend": "whisper.cpp", "model": "/home/user/.cache/whisper/ggml-base.bin"}
+```
+
+## Dependencies
+
+### Python
+
+| Package | Version | Used By |
+|---------|---------|---------|
+| openvino | >= 2024.5.0 | server.py, server-native.py |
+| openvino-genai | >= 2024.5.0 | server.py, server-native.py |
+| openvino-tokenizers | >= 2024.5.0 | server.py, server-native.py |
+| librosa | 0.10.2.post1 | All servers |
+| flask | 3.1.0 | All servers |
+| aiohttp | latest | push-to-talk.py |
+| evdev | latest | push-to-talk.py |
+
+### System
+
+| Package | Purpose |
+|---------|---------|
+| `ydotool` | Type text into focused window (Wayland) |
+| `wtype` | Fallback Wayland text input |
+| `wl-clipboard` | Clipboard fallback (`wl-copy`) |
+| `xdotool` | X11 text input fallback |
+| `pipewire-pulseaudio` | Audio recording via `parec` |
+
+### Native Libraries
+
+| Library | Used By |
+|---------|---------|
+| `libwhisper.so` | server-whisper-cpp.py (ctypes) |
+| OpenVINO runtime | Both backends |
+
+## Hardware
+
+Tested on ASUS Zenbook DUO UX8406 with Intel Core Ultra 9 185H (integrated NPU).
+
+Required device files:
+- `/dev/accel/accel0` — Intel NPU
+- `/dev/dri` — DRI (GPU, optional)
