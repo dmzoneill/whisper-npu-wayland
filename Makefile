@@ -138,13 +138,13 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 	@printf '%s\n' \
 		'[Unit]' \
 		'Description=Push-to-Talk Voice Dictation' \
-		'After=whisper-cpp-server.service' \
-		'Wants=whisper-cpp-server.service' \
+		'After=whisper-server.service' \
+		'Wants=whisper-server.service' \
 		'' \
 		'[Service]' \
 		'Type=simple' \
 		'Environment=XDG_SESSION_TYPE=wayland' \
-		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend whisper-cpp' \
+		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino' \
 		'Restart=on-failure' \
 		'RestartSec=3' \
 		'' \

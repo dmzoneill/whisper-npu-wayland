@@ -1,6 +1,6 @@
 # Whisper NPU Server
 
-Local speech-to-text transcription server accelerated by Intel NPU hardware via OpenVINO. Includes a push-to-talk voice dictation client for Wayland desktops.
+Local speech-to-text transcription server that runs entirely on Intel NPU hardware via OpenVINO. Includes a push-to-talk voice dictation client for Wayland desktops.
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ curl -X POST http://127.0.0.1:5000/transcribe --data-binary @recording.wav
 # {"text": "This is the transcribed text."}
 ```
 
-### Stream transcription (real-time chunks via SSE)
+### Stream transcription (real-time token-by-token via SSE)
 
 ```bash
 curl -N -X POST http://127.0.0.1:5000/transcribe/stream --data-binary @recording.wav
@@ -62,19 +62,17 @@ graph TB
     end
 
     subgraph Server Layer
-        SN[server-native.py<br/>OpenVINO GenAI<br/>Port 5000]
-        SC[server-whisper-cpp.py<br/>whisper.cpp ctypes<br/>Port 5001]
+        SN[server-native.py<br/>OpenVINO GenAI · NPU<br/>Port 5000]
+        SC[server-whisper-cpp.py<br/>whisper.cpp · NPU encoder + CPU decoder<br/>Port 5001]
     end
 
     subgraph Inference Layer
-        OV[OpenVINO GenAI<br/>WhisperPipeline]
-        WC[libwhisper.so<br/>whisper.cpp C Library]
-        OVE[OpenVINO Encoder<br/>NPU Acceleration]
+        OV[OpenVINO GenAI<br/>WhisperPipeline<br/>Full NPU]
+        WC[libwhisper.so<br/>NPU encoder · CPU decoder]
     end
 
     subgraph Hardware
         NPU[Intel NPU<br/>/dev/accel/accel0]
-        CPU[CPU Fallback]
     end
 
     subgraph Models
@@ -83,27 +81,25 @@ graph TB
     end
 
     PTT -->|HTTP POST| SN
-    PTT -->|HTTP POST| SC
     CURL -->|HTTP POST| SN
     CURL -->|HTTP POST| SC
 
     SN --> OV
     SC --> WC
-    WC --> OVE
 
     OV --> NPU
-    OVE --> NPU
-    OV -.-> CPU
-    WC -.-> CPU
+    WC --> NPU
 
     OV --> OVM
     WC --> GGML
 
     style SN fill:#2d6a4f,color:#fff
-    style SC fill:#2d6a4f,color:#fff
+    style SC fill:#40916c,color:#fff
     style PTT fill:#1d3557,color:#fff
     style NPU fill:#e76f51,color:#fff
 ```
+
+The primary server (`server-native.py`) runs the full Whisper pipeline on the NPU. The secondary server (`server-whisper-cpp.py`) runs the encoder on NPU but the decoder on CPU. Push-to-talk defaults to the primary NPU server.
 
 ## Data Flow
 
@@ -121,13 +117,13 @@ sequenceDiagram
     S->>L: Load audio bytes
     L-->>S: float32 array @ 16kHz
     S->>P: pipeline.generate(audio)
-    P->>N: Inference on NPU
+    P->>N: Full inference on NPU
     N-->>P: Token sequence
     P-->>S: Transcribed text
     S-->>C: {"text": "..."}
 ```
 
-### Streaming Transcription (server-native.py)
+### Streaming Transcription
 
 ```mermaid
 sequenceDiagram
@@ -159,7 +155,7 @@ sequenceDiagram
     participant K as Keyboard (evdev)
     participant PTT as push-to-talk.py
     participant R as parec (PipeWire)
-    participant S as Whisper Server
+    participant S as Whisper Server :5000
     participant Y as ydotool / wtype
 
     Note over K,Y: Hold Mode (key held > 1.5s)
@@ -191,9 +187,9 @@ sequenceDiagram
 
 ## Servers
 
-### server-native.py (Primary)
+### server-native.py (Primary — Full NPU)
 
-OpenVINO GenAI server with batch and streaming transcription.
+OpenVINO GenAI server running the complete Whisper pipeline on the Intel NPU. Supports batch and real-time SSE streaming transcription.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -209,9 +205,9 @@ Environment variables:
 
 Models are loaded from `~/.whisper/models/` in OpenVINO format.
 
-### server-whisper-cpp.py
+### server-whisper-cpp.py (Secondary — NPU encoder, CPU decoder)
 
-Whisper.cpp server using ctypes bindings to `libwhisper.so`. Supports optional OpenVINO encoder acceleration on NPU.
+Whisper.cpp server using ctypes bindings to `libwhisper.so`. The encoder runs on NPU via OpenVINO acceleration, but the decoder runs on CPU.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
@@ -223,14 +219,14 @@ Whisper.cpp server using ctypes bindings to `libwhisper.so`. Supports optional O
 python3 server-whisper-cpp.py --port 5001 --model ~/.cache/whisper/ggml-base.bin --device NPU
 ```
 
-Models are GGML format stored in `~/.cache/whisper/`. If an OpenVINO encoder XML file exists alongside the model (`*-encoder-openvino.xml`), it is loaded for NPU acceleration; otherwise inference falls back to CPU.
+Models are GGML format stored in `~/.cache/whisper/`.
 
 ## Push-to-Talk Client
 
-Desktop voice dictation client for GNOME/Wayland. Listens for a hotkey via evdev, records audio through PipeWire, sends it to a whisper server, and types the result into the focused window.
+Desktop voice dictation client for GNOME/Wayland. Listens for a hotkey via evdev, records audio through PipeWire, sends it to the whisper server on port 5000, and types the result into the focused window.
 
 ```
-python3 push-to-talk.py --key KEY_RIGHTCTRL --backend whisper-cpp --stream-interval 3.0
+python3 push-to-talk.py --key KEY_RIGHTCTRL --backend openvino --stream-interval 3.0
 ```
 
 **Two modes of operation:**
@@ -250,40 +246,31 @@ graph LR
         PT[push-to-talk.service]
     end
 
-    PT -->|Wants=| WC
+    PT -->|Wants=| WS
 
     style WS fill:#2d6a4f,color:#fff
-    style WC fill:#2d6a4f,color:#fff
+    style WC fill:#40916c,color:#fff
     style PT fill:#1d3557,color:#fff
 ```
 
-`push-to-talk` depends on `whisper-cpp-server` by default.
+`push-to-talk` depends on `whisper-server` (the full NPU server) by default.
 
 ## Installation
 
 ### Prerequisites
 
 - Linux (Fedora) with Intel Core Ultra processor (NPU)
-- Device access: `/dev/accel/accel0` (NPU), `/dev/dri` (GPU)
+- Device access: `/dev/accel/accel0` (NPU)
 - Python 3
-
-### Quick Start
-
-```bash
-make install     # Install everything: Python deps, system packages, permissions, services
-make start       # Start whisper-server, whisper-cpp-server, and push-to-talk
-make status      # Check service status
-make test        # Health check against running servers
-```
 
 ### What `make install` Does
 
-1. **Python packages** — installs from `requirements.txt` plus `aiohttp` and `evdev`
+1. **Python packages** — installs from `requirements.txt` (openvino, flask, librosa, aiohttp, evdev)
 2. **System packages** — `ydotool`, `pipewire-pulseaudio`, `wtype`, `wl-clipboard`, `xdotool`
 3. **Permissions** — adds your user to the `input` group (for evdev keyboard access)
 4. **Default model** — downloads `whisper-small.en-fp16-ov` from HuggingFace if not already present
-5. **Services** — generates and installs four systemd user service files
-6. **Enable** — enables the three main services to start on login
+5. **Services** — generates and installs three systemd user service files
+6. **Enable** — enables services to start on login
 
 ### Makefile Targets
 
@@ -296,7 +283,10 @@ make test        # Health check against running servers
 | `make restart` | Restart all services |
 | `make status` | Show service and ydotoold status |
 | `make logs` | Show recent logs for all services |
-| `make test` | Curl health checks |
+| `make logs-server` | Show whisper-server logs |
+| `make logs-cpp` | Show whisper-cpp-server logs |
+| `make logs-ptt` | Show push-to-talk logs |
+| `make test` | Health checks against running servers |
 | `make uninstall` | Stop, disable, and remove services |
 | `make clean` | Remove downloaded models (prompts first) |
 
@@ -305,21 +295,21 @@ make test        # Health check against running servers
 Override defaults at install time:
 
 ```bash
-make install WHISPER_DEVICE=CPU WHISPER_MODEL=whisper-base.en WHISPER_CPP_PORT=5002
+make install WHISPER_DEVICE=CPU WHISPER_MODEL=whisper-base.en
 ```
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WHISPER_DEVICE` | `NPU` | OpenVINO device for server-native |
 | `WHISPER_MODEL` | `whisper-small.en-fp16-ov` | Default model for server-native |
-| `WHISPER_CPP_DEVICE` | `NPU` | OpenVINO device for whisper.cpp |
+| `WHISPER_CPP_DEVICE` | `NPU` | OpenVINO encoder device for whisper.cpp |
 | `WHISPER_CPP_PORT` | `5001` | Port for whisper.cpp server |
 
 ## Models
 
-### OpenVINO Models (for server-native.py)
+Stored in `~/.whisper/models/` in OpenVINO format. The default model is downloaded automatically by `make install`.
 
-Stored in `~/.whisper/models/`. Download from HuggingFace:
+To install additional models:
 
 ```bash
 cd ~/.whisper/models
@@ -331,17 +321,7 @@ done
 
 Available models: `whisper-tiny`, `whisper-base`, `whisper-small`, `whisper-medium`, `whisper-large-v3` (and `.en` variants).
 
-### GGML Models (for server-whisper-cpp.py)
-
-Stored in `~/.cache/whisper/`. Download:
-
-```bash
-mkdir -p ~/.cache/whisper
-curl -L -o ~/.cache/whisper/ggml-base.bin \
-    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
-```
-
-## API Usage
+## API Reference
 
 ### Batch Transcription
 
@@ -378,29 +358,19 @@ curl http://127.0.0.1:5000/models
 {"models": ["whisper-small.en-fp16-ov", "whisper-base.en"]}
 ```
 
-### Health Check (whisper.cpp)
-
-```bash
-curl http://127.0.0.1:5001/health
-```
-
-```json
-{"status": "ok", "backend": "whisper.cpp", "model": "/home/user/.cache/whisper/ggml-base.bin"}
-```
-
 ## Dependencies
 
 ### Python
 
 | Package | Version | Used By |
 |---------|---------|---------|
-| openvino | >= 2024.5.0 | server-native.py |
-| openvino-genai | >= 2024.5.0 | server-native.py |
-| openvino-tokenizers | >= 2024.5.0 | server-native.py |
-| librosa | 0.10.2.post1 | All servers |
-| flask | 3.1.0 | All servers |
-| aiohttp | latest | push-to-talk.py |
-| evdev | latest | push-to-talk.py |
+| openvino | >= 2025.4.0 | server-native.py |
+| openvino-genai | >= 2025.4.0 | server-native.py |
+| openvino-tokenizers | >= 2025.4.0 | server-native.py |
+| librosa | >= 0.10.2 | server-native.py, server-whisper-cpp.py |
+| flask | >= 3.1.0 | server-native.py, server-whisper-cpp.py |
+| aiohttp | >= 3.9.0 | push-to-talk.py |
+| evdev | >= 1.9.0 | push-to-talk.py |
 
 ### System
 
@@ -417,7 +387,7 @@ curl http://127.0.0.1:5001/health
 | Library | Used By |
 |---------|---------|
 | `libwhisper.so` | server-whisper-cpp.py (ctypes) |
-| OpenVINO runtime | Both backends |
+| OpenVINO runtime | server-native.py |
 
 ## Hardware
 
@@ -425,4 +395,3 @@ Tested on Lenovo ThinkPad P1 Gen 7 with Intel Core Ultra 7 165H (Meteor Lake NPU
 
 Required device files:
 - `/dev/accel/accel0` — Intel NPU
-- `/dev/dri` — DRI (GPU, optional)
