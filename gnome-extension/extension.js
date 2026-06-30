@@ -376,9 +376,9 @@ const WhisperIndicator = GObject.registerClass(
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      const applyItem = new PopupMenu.PopupMenuItem(_('Apply & Restart Services'))
-      applyItem.connect('activate', () => this._applyAndRestart())
-      this.menu.addMenuItem(applyItem)
+      this._applyItem = new PopupMenu.PopupMenuItem(_('Apply & Restart Services'))
+      this._applyItem.connect('activate', () => this._applyAndRestart())
+      this.menu.addMenuItem(this._applyItem)
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
@@ -491,7 +491,7 @@ const WhisperIndicator = GObject.registerClass(
           if (model === this._currentModel) {
             item.setOrnament(PopupMenu.Ornament.DOT)
           }
-          item.connect('activate', () => this._switchModel(model))
+          item.connect('activate', () => this._switchModel(model, item))
           this._modelSection.menu.addMenuItem(item)
         }
       }
@@ -513,7 +513,7 @@ const WhisperIndicator = GObject.registerClass(
             ? `${(model.downloads / 1000).toFixed(0)}k`
             : `${model.downloads}`
           const item = new PopupMenu.PopupMenuItem(`${model.name}  (${downloads} downloads)`)
-          item.connect('activate', () => this._startDownload(org, model.name))
+          item.connect('activate', () => this._startDownload(org, model.name, item))
           this._modelSection.menu.addMenuItem(item)
         }
       }
@@ -521,7 +521,11 @@ const WhisperIndicator = GObject.registerClass(
       this._modelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
-      refreshItem.connect('activate', () => this._refreshModelCache())
+      refreshItem.connect('activate', () => {
+        refreshItem.label.set_text(_('Refreshing...'))
+        refreshItem.reactive = false
+        this._refreshModelCache()
+      })
       this._modelSection.menu.addMenuItem(refreshItem)
 
       const activeLabel = this._currentModel || (localModels.length > 0 ? localModels[0] : '')
@@ -530,23 +534,29 @@ const WhisperIndicator = GObject.registerClass(
       }
     }
 
-    async _switchModel (modelName) {
+    async _switchModel (modelName, item) {
       if (!this._connected) {
         Main.notify(_('Whisper NPU'), _('Server is not connected'))
         return
       }
+
+      const origLabel = item.label.get_text()
+      item.label.set_text(_(`Loading ${modelName}...`))
+      item.reactive = false
+      this._modelSection.label.set_text(_(`Loading ${modelName}...`))
 
       logDebug(`Switching to model: ${modelName}`)
       const result = await this._client.setDefaultModel(modelName)
 
       if (result) {
         this._currentModel = modelName
-        this._modelSection.label.set_text(_(`Model: ${modelName}`))
-        this._refreshModelOrnaments(modelName)
-        Main.notify(_('Whisper NPU'), _(`Switched to model: ${modelName}`))
+        Main.notify(_('Whisper NPU'), _(`Switched to ${modelName}`))
       } else {
-        Main.notify(_('Whisper NPU'), _('Failed to switch model'))
+        item.label.set_text(origLabel)
+        item.reactive = true
+        Main.notify(_('Whisper NPU'), _(`Failed to load ${modelName}`))
       }
+      this._populateModelSection()
     }
 
     _refreshModelOrnaments (selected) {
@@ -570,16 +580,19 @@ const WhisperIndicator = GObject.registerClass(
       this._populateModelSection()
     }
 
-    async _startDownload (org, modelName) {
+    async _startDownload (org, modelName, item) {
+      item.label.set_text(_(`Downloading ${modelName}...`))
+      item.reactive = false
       this._modelSection.label.set_text(_(`Downloading ${modelName}...`))
-      Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}...`))
       logDebug(`Starting download: ${org}/${modelName}`)
 
       try {
         await downloadModel(org, modelName)
-        Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
+        item.label.set_text(_(`Downloaded ${modelName}`))
+        Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName}`))
       } catch (e) {
         logDebug(`Download failed: ${e.message}`)
+        item.label.set_text(_(`Failed: ${modelName}`))
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
       }
       this._populateModelSection()
@@ -601,7 +614,7 @@ const WhisperIndicator = GObject.registerClass(
           if (model === this._currentLlmModel) {
             item.setOrnament(PopupMenu.Ornament.DOT)
           }
-          item.connect('activate', () => this._switchLlmModel(model))
+          item.connect('activate', () => this._switchLlmModel(model, item))
           this._llmModelSection.menu.addMenuItem(item)
         }
       }
@@ -622,7 +635,7 @@ const WhisperIndicator = GObject.registerClass(
             ? `${(model.downloads / 1000).toFixed(0)}k`
             : `${model.downloads}`
           const item = new PopupMenu.PopupMenuItem(`${model.name}  (${downloads} downloads)`)
-          item.connect('activate', () => this._startLlmDownload(model.name))
+          item.connect('activate', () => this._startLlmDownload(model.name, item))
           this._llmModelSection.menu.addMenuItem(item)
         }
       }
@@ -630,7 +643,11 @@ const WhisperIndicator = GObject.registerClass(
       this._llmModelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
-      refreshItem.connect('activate', () => this._refreshLlmCache())
+      refreshItem.connect('activate', () => {
+        refreshItem.label.set_text(_('Refreshing...'))
+        refreshItem.reactive = false
+        this._refreshLlmCache()
+      })
       this._llmModelSection.menu.addMenuItem(refreshItem)
 
       const label = this._currentLlmModel ? `LLM: ${this._currentLlmModel}` : 'Language Buddy Models'
@@ -643,27 +660,40 @@ const WhisperIndicator = GObject.registerClass(
       this._populateLlmModelSection()
     }
 
-    async _switchLlmModel (modelName) {
+    async _switchLlmModel (modelName, item) {
+      const origLabel = item.label.get_text()
+      item.label.set_text(_(`Loading ${modelName}...`))
+      item.reactive = false
+      this._llmModelSection.label.set_text(_(`Loading ${modelName}...`))
+
       logDebug(`Switching LLM to: ${modelName}`)
       const result = await this._client.setLlmModel(modelName)
+
       if (result) {
-        Main.notify(_('Whisper NPU'), _(`LLM switched to: ${modelName}`))
-        this._populateLlmModelSection()
+        this._currentLlmModel = modelName
+        Main.notify(_('Whisper NPU'), _(`LLM: ${modelName}`))
       } else {
-        Main.notify(_('Whisper NPU'), _('Failed to switch LLM model'))
+        item.label.set_text(origLabel)
+        item.reactive = true
+        Main.notify(_('Whisper NPU'), _(`Failed to load ${modelName}`))
       }
+      this._populateLlmModelSection()
     }
 
-    async _startLlmDownload (modelName) {
+    async _startLlmDownload (modelName, item) {
       logDebug(`Download LLM: ${modelName}`)
+      item.label.set_text(_(`Downloading ${modelName}...`))
+      item.reactive = false
       this._llmModelSection.label.set_text(_(`Downloading ${modelName}...`))
       const org = this._settings.get_string('hf-org')
-      Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}...`))
+
       try {
         await downloadLlmModel(org, modelName)
-        Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
+        item.label.set_text(_(`Downloaded ${modelName}`))
+        Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName}`))
       } catch (e) {
         logDebug(`LLM download failed: ${e.message}`)
+        item.label.set_text(_(`Failed: ${modelName}`))
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
       }
       this._populateLlmModelSection()
@@ -672,6 +702,9 @@ const WhisperIndicator = GObject.registerClass(
     // -- Apply settings -----------------------------------------------------
 
     async _applyAndRestart () {
+      this._applyItem.label.set_text(_('Restarting services...'))
+      this._applyItem.reactive = false
+
       const device = this._settings.get_string('device')
       const backend = this._settings.get_string('backend')
       const hotkey = this._settings.get_string('hotkey')
@@ -686,11 +719,19 @@ const WhisperIndicator = GObject.registerClass(
         await restartService('whisper-server.service')
         await restartService('push-to-talk.service')
 
-        Main.notify(_('Whisper NPU'), _('Services restarted with new settings'))
+        this._applyItem.label.set_text(_('Services restarted'))
+        Main.notify(_('Whisper NPU'), _('Services restarted'))
       } catch (e) {
         logDebug(`Failed to apply settings: ${e.message}`)
+        this._applyItem.label.set_text(_('Restart failed'))
         Main.notify(_('Whisper NPU'), _(`Failed to restart: ${e.message}`))
       }
+
+      this._applyItem.reactive = true
+      GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
+        this._applyItem.label.set_text(_('Apply & Restart Services'))
+        return GLib.SOURCE_REMOVE
+      })
     }
 
     // -- Cleanup ------------------------------------------------------------
