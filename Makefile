@@ -71,7 +71,7 @@ install-system: ## Install system packages via dnf (requires sudo)
 	@printf '%s\n' \
 		'[Service]' \
 		'RestartSec=3' \
-		'ExecStartPost=/bin/bash -c '"'"'sleep 0.5 && chmod 666 /tmp/.ydotool_socket && for d in /run/user/*/; do ln -sf /tmp/.ydotool_socket "$$d.ydotool_socket" 2>/dev/null || true; done'"'"'' \
+		"ExecStartPost=/bin/bash -c 'sleep 0.5 && chmod 666 /tmp/.ydotool_socket'" \
 		| sudo tee /etc/systemd/system/ydotool.service.d/socket-permissions.conf > /dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable ydotool.service
@@ -179,6 +179,7 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 		'[Service]' \
 		'Type=simple' \
 		'Environment=XDG_SESSION_TYPE=wayland' \
+		'Environment=YDOTOOL_SOCKET=/tmp/.ydotool_socket' \
 		'ExecStartPre=/bin/bash -c '"'"'i=0; while [ $$i -lt 60 ]; do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && exit 0; sleep 1; i=$$((i+1)); done; echo whisper-server not ready after 60s; exit 1'"'"'' \
 		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino' \
 		'Restart=on-failure' \
@@ -222,7 +223,7 @@ status: ## Show service status
 	@echo ""
 	@echo "=== ydotoold ==="
 	@systemctl status ydotool.service --no-pager 2>/dev/null || echo "  not installed"
-	@ls -la /run/user/$$(id -u)/.ydotool_socket 2>/dev/null || echo "  socket not found at /run/user/$$(id -u)/.ydotool_socket"
+	@ls -la /tmp/.ydotool_socket 2>/dev/null || echo "  socket not found at /tmp/.ydotool_socket"
 
 # ----------------------------------------------------------------------------
 # Logs
