@@ -126,11 +126,19 @@ const LanguageBuddyOverlay = GObject.registerClass(
 
         const monitor = Main.layoutManager.primaryMonitor
         if (!monitor) return
+
+        const maxH = monitor.height - OVERLAY_PADDING * 2
         const [, natW] = this.get_preferred_width(-1)
         const [, natH] = this.get_preferred_height(-1)
+        const h = Math.min(natH, maxH)
+
+        if (natH > maxH) {
+          this.style = `max-height: ${maxH}px;`
+        }
+
         this.set_position(
           monitor.x + monitor.width - natW - OVERLAY_PADDING,
-          monitor.y + monitor.height - natH - OVERLAY_PADDING
+          monitor.y + monitor.height - h - OVERLAY_PADDING
         )
       })
     }
@@ -145,6 +153,7 @@ const LanguageBuddyOverlay = GObject.registerClass(
         this._timeoutId = null
       }
       this.visible = false
+      this.style = null
       this.destroy_all_children()
     }
 
