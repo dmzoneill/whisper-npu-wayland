@@ -107,8 +107,13 @@ const LanguageBuddyOverlay = GObject.registerClass(
         this.add_child(card)
       }
 
-      this._position()
       this.visible = true
+
+      this._positionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        this._positionId = null
+        this._applyPosition()
+        return GLib.SOURCE_REMOVE
+      })
 
       if (timeoutSec > 0) {
         this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSec, () => {
@@ -118,35 +123,29 @@ const LanguageBuddyOverlay = GObject.registerClass(
       }
     }
 
-    _position () {
-      if (this._allocId) return
-      this._allocId = this.connect('notify::allocation', () => {
-        this.disconnect(this._allocId)
-        this._allocId = null
+    _applyPosition () {
+      const monitor = Main.layoutManager.primaryMonitor
+      if (!monitor) return
 
-        const monitor = Main.layoutManager.primaryMonitor
-        if (!monitor) return
+      const maxW = monitor.width - OVERLAY_PADDING * 2
+      const maxH = monitor.height - OVERLAY_PADDING * 2
+      const w = Math.min(this.width || 480, maxW)
+      const h = Math.min(this.height || 200, maxH)
 
-        const maxH = monitor.height - OVERLAY_PADDING * 2
-        const [, natW] = this.get_preferred_width(-1)
-        const [, natH] = this.get_preferred_height(-1)
-        const h = Math.min(natH, maxH)
+      if (this.height > maxH) {
+        this.style = `max-height: ${maxH}px;`
+      }
 
-        if (natH > maxH) {
-          this.style = `max-height: ${maxH}px;`
-        }
-
-        this.set_position(
-          monitor.x + monitor.width - natW - OVERLAY_PADDING,
-          monitor.y + monitor.height - h - OVERLAY_PADDING
-        )
-      })
+      this.set_position(
+        monitor.x + monitor.width - w - OVERLAY_PADDING,
+        monitor.y + monitor.height - h - OVERLAY_PADDING
+      )
     }
 
     _dismiss () {
-      if (this._allocId) {
-        this.disconnect(this._allocId)
-        this._allocId = null
+      if (this._positionId) {
+        GLib.source_remove(this._positionId)
+        this._positionId = null
       }
       if (this._timeoutId) {
         GLib.source_remove(this._timeoutId)
@@ -557,19 +556,6 @@ const WhisperIndicator = GObject.registerClass(
         Main.notify(_('Whisper NPU'), _(`Failed to load ${modelName}`))
       }
       this._populateModelSection()
-    }
-
-    _refreshModelOrnaments (selected) {
-      const items = this._modelSection.menu._getMenuItems()
-      for (const item of items) {
-        if (item.label) {
-          item.setOrnament(
-            item.label.get_text() === selected
-              ? PopupMenu.Ornament.DOT
-              : PopupMenu.Ornament.NONE
-          )
-        }
-      }
     }
 
     // -- STT model download -------------------------------------------------
