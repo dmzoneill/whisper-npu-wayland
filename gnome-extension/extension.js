@@ -63,8 +63,10 @@ const LanguageBuddyOverlay = GObject.registerClass(
       this._timeoutId = null
     }
 
-    show (variants, onSelect, timeoutSec) {
+    show (tones, originalText, onSelect, timeoutSec) {
       this.destroy_all_children()
+      this._cards = {}
+      this._onSelect = onSelect
 
       const header = new St.Label({
         text: _('Language Buddy'),
@@ -72,41 +74,78 @@ const LanguageBuddyOverlay = GObject.registerClass(
       })
       this.add_child(header)
 
-      for (const variant of variants) {
-        const card = new St.Button({
-          style_class: 'whisper-overlay-card',
-          x_expand: true,
-          reactive: true,
-          can_focus: false,
-          track_hover: true
-        })
-
-        const cardBox = new St.BoxLayout({ vertical: true })
-
-        const toneLabel = new St.Label({
-          text: variant.tone.charAt(0).toUpperCase() + variant.tone.slice(1),
-          style_class: 'whisper-overlay-tone'
-        })
-        cardBox.add_child(toneLabel)
-
-        const textLabel = new St.Label({
-          text: variant.text,
-          style_class: 'whisper-overlay-text'
-        })
-        textLabel.clutter_text.set_line_wrap(true)
-        textLabel.clutter_text.set_ellipsize(0)
-        cardBox.add_child(textLabel)
-
-        card.set_child(cardBox)
-
-        card.connect('clicked', () => {
-          this._dismiss()
-          onSelect(variant.text)
-        })
-
-        this.add_child(card)
+      this._addCard('original', originalText, true)
+      for (const tone of tones) {
+        this._addCard(tone, _('Processing...'), false)
       }
 
+      this._showAndPosition()
+
+      if (timeoutSec > 0) {
+        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSec, () => {
+          this._dismiss()
+          return GLib.SOURCE_REMOVE
+        })
+      }
+    }
+
+    _addCard (tone, text, ready) {
+      const card = new St.Button({
+        style_class: 'whisper-overlay-card',
+        x_expand: true,
+        reactive: ready,
+        can_focus: false,
+        track_hover: true
+      })
+
+      const cardBox = new St.BoxLayout({ vertical: true })
+
+      const toneLabel = new St.Label({
+        text: tone.charAt(0).toUpperCase() + tone.slice(1),
+        style_class: 'whisper-overlay-tone'
+      })
+      cardBox.add_child(toneLabel)
+
+      const textLabel = new St.Label({
+        text,
+        style_class: 'whisper-overlay-text'
+      })
+      textLabel.clutter_text.set_line_wrap(true)
+      textLabel.clutter_text.set_ellipsize(0)
+      cardBox.add_child(textLabel)
+
+      card.set_child(cardBox)
+
+      card.connect('clicked', () => {
+        if (this._onSelect) {
+          this._dismiss()
+          this._onSelect(text)
+        }
+      })
+
+      this.add_child(card)
+      this._cards[tone] = { card, textLabel, text }
+    }
+
+    updateCard (tone, text) {
+      const entry = this._cards[tone]
+      if (!entry) return
+      entry.text = text
+      entry.textLabel.set_text(text)
+      entry.card.reactive = true
+
+      const onSelect = this._onSelect
+      entry.card.connect('clicked', () => {
+        if (onSelect) {
+          this._dismiss()
+          onSelect(text)
+        }
+      })
+
+      this._reposition()
+    }
+
+    _showAndPosition () {
       const monitor = Main.layoutManager.primaryMonitor
       if (!monitor) return
 
@@ -116,21 +155,24 @@ const LanguageBuddyOverlay = GObject.registerClass(
       this.set_position(monitor.x + monitor.width, monitor.y + monitor.height)
       this.visible = true
 
+      this._reposition()
+    }
+
+    _reposition () {
+      if (this._positionId) {
+        GLib.source_remove(this._positionId)
+        this._positionId = null
+      }
       this._positionId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
         this._positionId = null
+        const monitor = Main.layoutManager.primaryMonitor
+        if (!monitor) return GLib.SOURCE_REMOVE
         this.set_position(
           monitor.x + monitor.width - this.width - OVERLAY_PADDING,
           monitor.y + monitor.height - this.height - OVERLAY_PADDING
         )
         return GLib.SOURCE_REMOVE
       })
-
-      if (timeoutSec > 0) {
-        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSec, () => {
-          this._dismiss()
-          return GLib.SOURCE_REMOVE
-        })
-      }
     }
 
     _dismiss () {
@@ -144,6 +186,8 @@ const LanguageBuddyOverlay = GObject.registerClass(
       }
       this.visible = false
       this.style = null
+      this._cards = {}
+      this._onSelect = null
       this.destroy_all_children()
     }
 
@@ -264,38 +308,46 @@ const WhisperIndicator = GObject.registerClass(
         typeText(text).catch(e => logDebug(`typeText failed: ${e.message}`))
       }
 
-      const tones = DEFAULT_TONES
-      const result = await this._client.rewrite(text, tones)
-
-      if (!result || !result.variants) {
-        if (!bypass) {
-          logDebug('Rewrite failed, typing original text')
-          typeText(text).catch(e => logDebug(`typeText failed: ${e.message}`))
-        }
-        return
-      }
-
       const timeoutSec = this._settings.get_int('language-buddy-timeout')
+      const tones = DEFAULT_TONES
 
-      if (bypass) {
-        this._overlay.show(result.variants, async (selectedText) => {
-          if (selectedText === text) return
-          try {
-            await backspaceN(text.length)
-            await typeText(selectedText)
-          } catch (e) {
-            logDebug(`Replace failed: ${e.message}`)
+      const onSelect = bypass
+        ? async (selectedText) => {
+            if (selectedText === text) return
+            try {
+              await backspaceN(text.length)
+              await typeText(selectedText)
+            } catch (e) {
+              logDebug(`Replace failed: ${e.message}`)
+            }
           }
-        }, timeoutSec)
-      } else {
-        this._overlay.show(result.variants, async (selectedText) => {
-          try {
-            await typeText(selectedText)
-          } catch (e) {
-            logDebug(`typeText failed: ${e.message}`)
-            Main.notify(_('Whisper NPU'), _('Failed to type selected text'))
+        : async (selectedText) => {
+            try {
+              await typeText(selectedText)
+            } catch (e) {
+              logDebug(`typeText failed: ${e.message}`)
+            }
           }
-        }, timeoutSec)
+
+      this._overlay.show(tones, text, onSelect, timeoutSec)
+
+      for (const tone of tones) {
+        try {
+          const result = await this._client.rewrite(text, [tone])
+          if (result && result.variants) {
+            const variant = result.variants.find(v => v.tone === tone)
+            if (variant && !variant.error) {
+              this._overlay.updateCard(tone, variant.text)
+            } else {
+              this._overlay.updateCard(tone, text)
+            }
+          } else {
+            this._overlay.updateCard(tone, text)
+          }
+        } catch (e) {
+          logDebug(`Rewrite (${tone}) failed: ${e.message}`)
+          this._overlay.updateCard(tone, text)
+        }
       }
     }
 
