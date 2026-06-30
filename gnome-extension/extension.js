@@ -171,6 +171,7 @@ const WhisperIndicator = GObject.registerClass(
       this._downloadCancellable = null
       this._cachedRemoteModels = []
       this._cacheReady = false
+      this._currentLlmModel = null
 
       this._client = new WhisperClient(
         this._settings.get_string('server-host'),
@@ -219,9 +220,10 @@ const WhisperIndicator = GObject.registerClass(
     async _preloadCache () {
       try {
         const org = this._settings.get_string('hf-org')
-        const [health, remoteModels] = await Promise.all([
+        const [health, remoteModels, llmInfo] = await Promise.all([
           this._client.getHealth(),
-          this._hfClient.searchModels(org)
+          this._hfClient.searchModels(org),
+          this._client.getLlmModels()
         ])
 
         if (health) {
@@ -229,9 +231,15 @@ const WhisperIndicator = GObject.registerClass(
           this._currentModel = health.model
         }
 
+        this._currentLlmModel = llmInfo ? llmInfo.current : null
+
         this._cachedRemoteModels = remoteModels || []
         this._cacheReady = true
         logDebug(`Preloaded ${this._cachedRemoteModels.length} remote models`)
+
+        this._populateDownloadSection()
+        this._populateModelSection()
+        this._populateLlmModelSection()
       } catch (e) {
         logDebug(`Preload failed: ${e.message}`)
         this._cacheReady = true
@@ -327,17 +335,11 @@ const WhisperIndicator = GObject.registerClass(
 
       // STT model download
       this._downloadSection = new PopupMenu.PopupSubMenuMenuItem(_('Download Models'))
-      this._downloadSection.menu.connect('open-state-changed', (_menu, isOpen) => {
-        if (isOpen) this._refreshDownloadSection()
-      })
       this.menu.addMenuItem(this._downloadSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       // LLM model section
       this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
-      this._llmModelSection.menu.connect('open-state-changed', (_menu, isOpen) => {
-        if (isOpen) this._refreshLlmModelSection()
-      })
       this.menu.addMenuItem(this._llmModelSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
@@ -458,12 +460,12 @@ const WhisperIndicator = GObject.registerClass(
         this._statusItem.label.set_text(_('Status: Disconnected'))
       }
 
-      this._refreshModelSection()
+      this._populateModelSection()
     }
 
     // -- STT model management -----------------------------------------------
 
-    async _refreshModelSection () {
+    _populateModelSection () {
       this._modelSection.menu.removeAll()
 
       const localModels = listLocalModels()
@@ -521,23 +523,18 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- STT model download -------------------------------------------------
 
-    async _refreshDownloadSection (forceRefresh = false) {
+    _populateDownloadSection () {
       this._downloadSection.menu.removeAll()
 
       const org = this._settings.get_string('hf-org')
-
-      if (forceRefresh || !this._cacheReady) {
-        const loadingItem = new PopupMenu.PopupMenuItem(_('Fetching from HuggingFace...'), { reactive: false })
-        this._downloadSection.menu.addMenuItem(loadingItem)
-
-        this._cachedRemoteModels = await this._hfClient.searchModels(org) || []
-        this._cacheReady = true
-
-        this._downloadSection.menu.removeAll()
-      }
-
       const remoteModels = this._cachedRemoteModels
       const localModels = listLocalModels()
+
+      if (!this._cacheReady) {
+        const loadingItem = new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+        this._downloadSection.menu.addMenuItem(loadingItem)
+        return
+      }
 
       if (remoteModels.length === 0) {
         const noModels = new PopupMenu.PopupMenuItem(_('No models found'), { reactive: false })
@@ -564,10 +561,14 @@ const WhisperIndicator = GObject.registerClass(
       this._downloadSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
-      refreshItem.connect('activate', () => {
-        this._refreshDownloadSection(true)
-      })
+      refreshItem.connect('activate', () => this._refreshDownloadCache())
       this._downloadSection.menu.addMenuItem(refreshItem)
+    }
+
+    async _refreshDownloadCache () {
+      const org = this._settings.get_string('hf-org')
+      this._cachedRemoteModels = await this._hfClient.searchModels(org) || []
+      this._populateDownloadSection()
     }
 
     async _startDownload (org, modelName) {
@@ -577,8 +578,8 @@ const WhisperIndicator = GObject.registerClass(
       try {
         await downloadModel(org, modelName)
         Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
-        this._refreshModelSection()
-        this._refreshDownloadSection()
+        this._populateModelSection()
+        this._populateDownloadSection()
       } catch (e) {
         logDebug(`Download failed: ${e.message}`)
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
@@ -587,12 +588,10 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- LLM model management -----------------------------------------------
 
-    async _refreshLlmModelSection () {
+    _populateLlmModelSection () {
       this._llmModelSection.menu.removeAll()
 
       const localModels = listLocalLlmModels()
-      const serverInfo = await this._client.getLlmModels()
-      const currentLlm = serverInfo ? serverInfo.current : ''
 
       if (localModels.length === 0) {
         const noModels = new PopupMenu.PopupMenuItem(_('No LLM models found'), { reactive: false })
@@ -600,7 +599,7 @@ const WhisperIndicator = GObject.registerClass(
       } else {
         for (const model of localModels) {
           const item = new PopupMenu.PopupMenuItem(model)
-          if (model === currentLlm) {
+          if (model === this._currentLlmModel) {
             item.setOrnament(PopupMenu.Ornament.DOT)
           }
           item.connect('activate', () => this._switchLlmModel(model))
@@ -614,7 +613,7 @@ const WhisperIndicator = GObject.registerClass(
       downloadItem.connect('activate', () => this._startLlmDownload())
       this._llmModelSection.menu.addMenuItem(downloadItem)
 
-      const label = currentLlm ? `LLM: ${currentLlm}` : 'Language Buddy Models'
+      const label = this._currentLlmModel ? `LLM: ${this._currentLlmModel}` : 'Language Buddy Models'
       this._llmModelSection.label.set_text(_(label))
     }
 
@@ -623,7 +622,7 @@ const WhisperIndicator = GObject.registerClass(
       const result = await this._client.setLlmModel(modelName)
       if (result) {
         Main.notify(_('Whisper NPU'), _(`LLM switched to: ${modelName}`))
-        this._refreshLlmModelSection()
+        this._populateLlmModelSection()
       } else {
         Main.notify(_('Whisper NPU'), _('Failed to switch LLM model'))
       }
@@ -636,7 +635,7 @@ const WhisperIndicator = GObject.registerClass(
       try {
         await downloadLlmModel(org, modelName)
         Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
-        this._refreshLlmModelSection()
+        this._populateLlmModelSection()
       } catch (e) {
         logDebug(`LLM download failed: ${e.message}`)
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
