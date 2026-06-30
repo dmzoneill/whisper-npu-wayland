@@ -116,15 +116,18 @@ const LanguageBuddyOverlay = GObject.registerClass(
 
       card.set_child(cardBox)
 
+      const entry = { card, textLabel, text }
+      this._cards[tone] = entry
+
       card.connect('clicked', () => {
-        if (this._onSelect) {
+        if (this._onSelect && entry.card.reactive) {
+          const selectedText = entry.text
           this._dismiss()
-          this._onSelect(text)
+          this._onSelect(selectedText)
         }
       })
 
       this.add_child(card)
-      this._cards[tone] = { card, textLabel, text }
     }
 
     updateCard (tone, text) {
@@ -133,15 +136,6 @@ const LanguageBuddyOverlay = GObject.registerClass(
       entry.text = text
       entry.textLabel.set_text(text)
       entry.card.reactive = true
-
-      const onSelect = this._onSelect
-      entry.card.connect('clicked', () => {
-        if (onSelect) {
-          this._dismiss()
-          onSelect(text)
-        }
-      })
-
       this._reposition()
     }
 
