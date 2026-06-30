@@ -1,0 +1,19 @@
+---
+name: CICD
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  repository_dispatch:
+    types: [ refresh ]
+    
+permissions: write-all
+
+jobs:
+  cicd:
+    secrets: inherit
+    uses: dmzoneill/dmzoneill/.github/workflows/dispatch.yaml@main
+    with:
+      basic: "true"
