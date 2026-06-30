@@ -122,8 +122,9 @@ const LanguageBuddyOverlay = GObject.registerClass(
       card.connect('clicked', () => {
         if (this._onSelect && entry.card.reactive) {
           const selectedText = entry.text
+          const callback = this._onSelect
           this._dismiss()
-          this._onSelect(selectedText)
+          callback(selectedText)
         }
       })
 
