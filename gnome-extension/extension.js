@@ -119,15 +119,27 @@ const LanguageBuddyOverlay = GObject.registerClass(
     }
 
     _position () {
-      const monitor = Main.layoutManager.primaryMonitor
-      if (!monitor) return
-      this.set_position(
-        monitor.x + monitor.width - this.width - OVERLAY_PADDING,
-        monitor.y + monitor.height - this.height - OVERLAY_PADDING
-      )
+      if (this._allocId) return
+      this._allocId = this.connect('notify::allocation', () => {
+        this.disconnect(this._allocId)
+        this._allocId = null
+
+        const monitor = Main.layoutManager.primaryMonitor
+        if (!monitor) return
+        const [, natW] = this.get_preferred_width(-1)
+        const [, natH] = this.get_preferred_height(-1)
+        this.set_position(
+          monitor.x + monitor.width - natW - OVERLAY_PADDING,
+          monitor.y + monitor.height - natH - OVERLAY_PADDING
+        )
+      })
     }
 
     _dismiss () {
+      if (this._allocId) {
+        this.disconnect(this._allocId)
+        this._allocId = null
+      }
       if (this._timeoutId) {
         GLib.source_remove(this._timeoutId)
         this._timeoutId = null
@@ -157,6 +169,8 @@ const WhisperIndicator = GObject.registerClass(
       this._connected = false
       this._currentModel = null
       this._downloadCancellable = null
+      this._cachedRemoteModels = []
+      this._cacheReady = false
 
       this._client = new WhisperClient(
         this._settings.get_string('server-host'),
@@ -198,6 +212,30 @@ const WhisperIndicator = GObject.registerClass(
       // D-Bus
       this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(DBUS_IFACE, this)
       this._dbusImpl.export(Gio.DBus.session, '/com/whisper/LanguageBuddy')
+
+      this._preloadCache()
+    }
+
+    async _preloadCache () {
+      try {
+        const org = this._settings.get_string('hf-org')
+        const [health, remoteModels] = await Promise.all([
+          this._client.getHealth(),
+          this._hfClient.searchModels(org)
+        ])
+
+        if (health) {
+          this._connected = true
+          this._currentModel = health.model
+        }
+
+        this._cachedRemoteModels = remoteModels || []
+        this._cacheReady = true
+        logDebug(`Preloaded ${this._cachedRemoteModels.length} remote models`)
+      } catch (e) {
+        logDebug(`Preload failed: ${e.message}`)
+        this._cacheReady = true
+      }
     }
 
     // -- D-Bus method handler -----------------------------------------------
@@ -289,12 +327,8 @@ const WhisperIndicator = GObject.registerClass(
 
       // STT model download
       this._downloadSection = new PopupMenu.PopupSubMenuMenuItem(_('Download Models'))
-      this._downloadLoaded = false
       this._downloadSection.menu.connect('open-state-changed', (_menu, isOpen) => {
-        if (isOpen && !this._downloadLoaded) {
-          this._downloadLoaded = true
-          this._refreshDownloadSection()
-        }
+        if (isOpen) this._refreshDownloadSection()
       })
       this.menu.addMenuItem(this._downloadSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
@@ -487,17 +521,23 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- STT model download -------------------------------------------------
 
-    async _refreshDownloadSection () {
+    async _refreshDownloadSection (forceRefresh = false) {
       this._downloadSection.menu.removeAll()
-
-      const loadingItem = new PopupMenu.PopupMenuItem(_('Fetching from HuggingFace...'), { reactive: false })
-      this._downloadSection.menu.addMenuItem(loadingItem)
 
       const org = this._settings.get_string('hf-org')
-      const remoteModels = await this._hfClient.searchModels(org)
-      const localModels = listLocalModels()
 
-      this._downloadSection.menu.removeAll()
+      if (forceRefresh || !this._cacheReady) {
+        const loadingItem = new PopupMenu.PopupMenuItem(_('Fetching from HuggingFace...'), { reactive: false })
+        this._downloadSection.menu.addMenuItem(loadingItem)
+
+        this._cachedRemoteModels = await this._hfClient.searchModels(org) || []
+        this._cacheReady = true
+
+        this._downloadSection.menu.removeAll()
+      }
+
+      const remoteModels = this._cachedRemoteModels
+      const localModels = listLocalModels()
 
       if (remoteModels.length === 0) {
         const noModels = new PopupMenu.PopupMenuItem(_('No models found'), { reactive: false })
@@ -525,8 +565,7 @@ const WhisperIndicator = GObject.registerClass(
 
       const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
       refreshItem.connect('activate', () => {
-        this._downloadLoaded = false
-        this._refreshDownloadSection()
+        this._refreshDownloadSection(true)
       })
       this._downloadSection.menu.addMenuItem(refreshItem)
     }
