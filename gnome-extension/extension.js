@@ -170,6 +170,7 @@ const WhisperIndicator = GObject.registerClass(
       this._currentModel = null
       this._downloadCancellable = null
       this._cachedRemoteModels = []
+      this._cachedRemoteLlmModels = []
       this._cacheReady = false
       this._currentLlmModel = null
 
@@ -220,9 +221,10 @@ const WhisperIndicator = GObject.registerClass(
     async _preloadCache () {
       try {
         const org = this._settings.get_string('hf-org')
-        const [health, remoteModels, llmInfo] = await Promise.all([
+        const [health, remoteModels, remoteLlmModels, llmInfo] = await Promise.all([
           this._client.getHealth(),
           this._hfClient.searchModels(org),
+          this._hfClient.searchLlmModels(org),
           this._client.getLlmModels()
         ])
 
@@ -234,8 +236,9 @@ const WhisperIndicator = GObject.registerClass(
         this._currentLlmModel = llmInfo ? llmInfo.current : null
 
         this._cachedRemoteModels = remoteModels || []
+        this._cachedRemoteLlmModels = remoteLlmModels || []
         this._cacheReady = true
-        logDebug(`Preloaded ${this._cachedRemoteModels.length} remote models`)
+        logDebug(`Preloaded ${this._cachedRemoteModels.length} STT and ${this._cachedRemoteLlmModels.length} LLM remote models`)
 
         this._populateDownloadSection()
         this._populateModelSection()
@@ -603,7 +606,7 @@ const WhisperIndicator = GObject.registerClass(
       const localModels = listLocalLlmModels()
 
       if (localModels.length === 0) {
-        const noModels = new PopupMenu.PopupMenuItem(_('No LLM models found'), { reactive: false })
+        const noModels = new PopupMenu.PopupMenuItem(_('No LLM models installed'), { reactive: false })
         this._llmModelSection.menu.addMenuItem(noModels)
       } else {
         for (const model of localModels) {
@@ -616,14 +619,41 @@ const WhisperIndicator = GObject.registerClass(
         }
       }
 
+      const available = this._cachedRemoteLlmModels.filter(
+        m => !localModels.includes(m.name)
+      )
+
+      if (available.length > 0) {
+        this._llmModelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+        const downloadHeader = new PopupMenu.PopupMenuItem(_('Available Downloads'), { reactive: false })
+        downloadHeader.label.add_style_class_name('whisper-status-label')
+        this._llmModelSection.menu.addMenuItem(downloadHeader)
+
+        for (const model of available) {
+          const downloads = model.downloads > 1000
+            ? `${(model.downloads / 1000).toFixed(0)}k`
+            : `${model.downloads}`
+          const item = new PopupMenu.PopupMenuItem(`${model.name}  (${downloads} downloads)`)
+          item.connect('activate', () => this._startLlmDownload(model.name))
+          this._llmModelSection.menu.addMenuItem(item)
+        }
+      }
+
       this._llmModelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      const downloadItem = new PopupMenu.PopupMenuItem(_('Download LLM Model...'))
-      downloadItem.connect('activate', () => this._startLlmDownload())
-      this._llmModelSection.menu.addMenuItem(downloadItem)
+      const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
+      refreshItem.connect('activate', () => this._refreshLlmCache())
+      this._llmModelSection.menu.addMenuItem(refreshItem)
 
       const label = this._currentLlmModel ? `LLM: ${this._currentLlmModel}` : 'Language Buddy Models'
       this._llmModelSection.label.set_text(_(label))
+    }
+
+    async _refreshLlmCache () {
+      const org = this._settings.get_string('hf-org')
+      this._cachedRemoteLlmModels = await this._hfClient.searchLlmModels(org) || []
+      this._populateLlmModelSection()
     }
 
     async _switchLlmModel (modelName) {
@@ -637,10 +667,9 @@ const WhisperIndicator = GObject.registerClass(
       }
     }
 
-    async _startLlmDownload () {
-      logDebug('Download LLM button clicked')
+    async _startLlmDownload (modelName) {
+      logDebug(`Download LLM: ${modelName}`)
       const org = this._settings.get_string('hf-org')
-      const modelName = 'Qwen2.5-1.5B-Instruct-int4-ov'
       Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}... This may take a while.`))
       try {
         await downloadLlmModel(org, modelName)

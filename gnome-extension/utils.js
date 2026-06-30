@@ -147,6 +147,33 @@ export class HuggingFaceClient {
     }
   }
 
+  async searchLlmModels (org) {
+    const url = `https://huggingface.co/api/models?author=${org}&search=int4-ov&sort=downloads&direction=-1&limit=50`
+    const message = new Soup.Message({
+      method: 'GET',
+      uri: GLib.Uri.parse(url, GLib.UriFlags.NONE)
+    })
+
+    try {
+      const bytes = await this._sendAsync(message)
+      if (message.get_status() !== Soup.Status.OK) {
+        throw new Error(`HuggingFace API returned ${message.get_status()}`)
+      }
+      const text = new TextDecoder().decode(bytes.get_data())
+      const models = JSON.parse(text)
+      return models
+        .filter(m => m.id.toLowerCase().includes('int4-ov'))
+        .map(m => ({
+          id: m.id,
+          name: m.id.split('/').pop(),
+          downloads: m.downloads || 0
+        }))
+    } catch (e) {
+      logDebug(`HuggingFace LLM search failed: ${e.message}`)
+      return []
+    }
+  }
+
   _sendAsync (message) {
     return new Promise((resolve, reject) => {
       this._session.send_and_read_async(
