@@ -68,11 +68,20 @@ const LanguageBuddyOverlay = GObject.registerClass(
       this._cards = {}
       this._onSelect = onSelect
 
-      const header = new St.Label({
+      const headerBox = new St.BoxLayout({ x_expand: true })
+      const headerLabel = new St.Label({
         text: _('Language Buddy'),
-        style_class: 'whisper-overlay-header'
+        style_class: 'whisper-overlay-header',
+        x_expand: true
       })
-      this.add_child(header)
+      const dismissBtn = new St.Button({
+        style_class: 'whisper-overlay-dismiss',
+        child: new St.Label({ text: '✕' })
+      })
+      dismissBtn.connect('clicked', () => this._dismiss())
+      headerBox.add_child(headerLabel)
+      headerBox.add_child(dismissBtn)
+      this.add_child(headerBox)
 
       this._addCard('original', originalText, true)
       for (const tone of tones) {
