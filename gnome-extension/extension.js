@@ -571,6 +571,7 @@ const WhisperIndicator = GObject.registerClass(
     }
 
     async _startDownload (org, modelName) {
+      this._modelSection.label.set_text(_(`Downloading ${modelName}...`))
       Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}...`))
       logDebug(`Starting download: ${org}/${modelName}`)
 
@@ -655,8 +656,9 @@ const WhisperIndicator = GObject.registerClass(
 
     async _startLlmDownload (modelName) {
       logDebug(`Download LLM: ${modelName}`)
+      this._llmModelSection.label.set_text(_(`Downloading ${modelName}...`))
       const org = this._settings.get_string('hf-org')
-      Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}... This may take a while.`))
+      Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}...`))
       try {
         await downloadLlmModel(org, modelName)
         Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
