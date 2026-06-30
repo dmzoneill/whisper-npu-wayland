@@ -1,0 +1,10 @@
+{
+  "uuid": "whisper-npu@dmz.oneill",
+  "name": "Whisper NPU",
+  "description": "Control panel for Whisper NPU speech-to-text server. Switch models, download new models from HuggingFace, and configure server options.",
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.whisper-npu",
+  "gettext-domain": "whisper-npu@dmz.oneill",
+  "shell-version": ["46", "47", "48", "49", "50", "51"],
+  "url": "https://github.com/dmzoneill/whisper-npu-server"
+}

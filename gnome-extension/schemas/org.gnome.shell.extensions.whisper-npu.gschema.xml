@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="gnome-shell-extensions">
+  <schema path="/org/gnome/shell/extensions/whisper-npu/" id="org.gnome.shell.extensions.whisper-npu">
+
+    <key name="server-host" type="s">
+      <default>'127.0.0.1'</default>
+      <summary>Server host</summary>
+      <description>Hostname or IP of the Whisper NPU server</description>
+    </key>
+
+    <key name="server-port" type="i">
+      <default>5000</default>
+      <summary>Server port</summary>
+      <description>Port number of the Whisper NPU server</description>
+    </key>
+
+    <key name="device" type="s">
+      <default>'NPU'</default>
+      <summary>Inference device</summary>
+      <description>OpenVINO inference device: NPU, CPU, or GPU</description>
+    </key>
+
+    <key name="backend" type="s">
+      <default>'openvino'</default>
+      <summary>Transcription backend</summary>
+      <description>Backend engine: openvino or whisper-cpp</description>
+    </key>
+
+    <key name="hotkey" type="s">
+      <default>'KEY_RIGHTCTRL'</default>
+      <summary>Push-to-talk hotkey</summary>
+      <description>evdev key name used for push-to-talk activation</description>
+    </key>
+
+    <key name="stream-interval" type="d">
+      <default>3.0</default>
+      <summary>Stream interval</summary>
+      <description>Seconds between streaming transcription updates in toggle mode</description>
+    </key>
+
+    <key name="hf-org" type="s">
+      <default>'OpenVINO'</default>
+      <summary>HuggingFace organization</summary>
+      <description>HuggingFace organization to search for whisper models</description>
+    </key>
+
+    <key name="language-buddy-enabled" type="b">
+      <default>false</default>
+      <summary>Enable Language Buddy</summary>
+      <description>When enabled, transcribed text is rewritten in multiple tones and presented in a floating overlay for selection</description>
+    </key>
+
+    <key name="language-buddy-bypass" type="b">
+      <default>false</default>
+      <summary>Bypass mode</summary>
+      <description>When enabled, the original text is typed immediately and the overlay appears for reference only. Clicking a card will replace the already-typed text.</description>
+    </key>
+
+    <key name="language-buddy-timeout" type="i">
+      <default>30</default>
+      <summary>Overlay auto-dismiss timeout</summary>
+      <description>Seconds before the Language Buddy overlay auto-dismisses (0 to disable)</description>
+    </key>
+
+  </schema>
+</schemalist>

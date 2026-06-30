@@ -1,0 +1,49 @@
+.whisper-status-label {
+  font-style: italic;
+}
+
+.whisper-overlay {
+  background-color: rgba(30, 30, 30, 0.95);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 380px;
+  max-width: 480px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.whisper-overlay-header {
+  font-size: 13px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.whisper-overlay-card {
+  background-color: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition-duration: 150ms;
+}
+
+.whisper-overlay-card:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+  border-color: rgba(120, 174, 237, 0.5);
+}
+
+.whisper-overlay-tone {
+  font-size: 11px;
+  font-weight: bold;
+  color: rgba(120, 174, 237, 0.9);
+  margin-bottom: 4px;
+}
+
+.whisper-overlay-text {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.4;
+}

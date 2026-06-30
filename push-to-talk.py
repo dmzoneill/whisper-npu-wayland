@@ -201,6 +201,29 @@ def type_text(text, delay_ms=2):
             log.error("xdotool failed: %s", e)
 
 
+def try_dbus_handoff(text):
+    """Try to hand off transcription to GNOME extension via D-Bus.
+    Uses native GLib D-Bus with 500ms timeout — returns in <10ms when
+    the extension isn't installed, avoiding subprocess overhead."""
+    try:
+        from gi.repository import Gio, GLib
+        bus = Gio.bus_get_sync(Gio.BusType.SESSION)
+        result = bus.call_sync(
+            'org.gnome.Shell',
+            '/com/whisper/LanguageBuddy',
+            'com.whisper.LanguageBuddy',
+            'HandleTranscription',
+            GLib.Variant('(s)', (text,)),
+            GLib.VariantType('(b)'),
+            Gio.DBusCallFlags.NONE,
+            500,
+            None
+        )
+        return result.unpack()[0]
+    except Exception:
+        return False
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Push-to-talk voice dictation")
     parser.add_argument("--key", default="KEY_RIGHTCTRL", help="Hold key name (default: KEY_RIGHTCTRL)")
@@ -309,7 +332,8 @@ async def main():
             await asyncio.sleep(interval)
 
     async def finalize_recording(port, delay_ms):
-        """Stop recording, do final transcription, and type result."""
+        """Stop recording, do final transcription, and type result.
+        Tries D-Bus handoff to GNOME extension first; falls back to direct typing."""
         nonlocal recording_proc, streaming_task, typed_char_count, streamed_text, mode
 
         if streaming_task:
@@ -330,8 +354,8 @@ async def main():
             return
         log.info("Recorded %.1fs of audio", duration)
 
-        if args.backend == "whisper-cpp":
-            log.info("Transcribing final...")
+        # Toggle mode with whisper-cpp: live diff correction (no D-Bus handoff)
+        if args.backend == "whisper-cpp" and mode == "toggle":
             text = await transcribe_chunk(wav_bytes, port)
             if text:
                 common = 0
@@ -349,22 +373,29 @@ async def main():
                 log.info("Final (-%d +%d): %s", chars_to_erase, len(new_suffix), text[:80])
             typed_char_count = 0
             streamed_text = ""
-        elif duration <= 30:
-            log.info("Streaming transcription...")
-            result = await transcribe_stream(wav_bytes, port, delay_ms)
-            if isinstance(result, str) and result:
-                log.info("Typing (fallback): %s", result[:80])
-                type_text(result, delay_ms=delay_ms)
-            elif not result:
-                log.info("No transcription returned")
+            mode = None
+            return
+
+        # Hold mode: transcribe, try D-Bus handoff, fallback to direct typing
+        log.info("Transcribing...")
+        if args.backend == "whisper-cpp":
+            text = await transcribe_chunk(wav_bytes, port)
         else:
-            log.info("Audio > 30s, using batch transcription...")
             text = await transcribe_batch(wav_bytes, port)
-            if text:
-                log.info("Typing: %s", text[:80] + ("..." if len(text) > 80 else ""))
-                type_text(text, delay_ms=delay_ms)
-            else:
-                log.info("No transcription returned")
+
+        if not text:
+            log.info("No transcription returned")
+            mode = None
+            return
+
+        text = text.strip()
+
+        if try_dbus_handoff(text):
+            log.info("Handed off to Language Buddy: %s", text[:80])
+        else:
+            log.info("Typing: %s", text[:80])
+            type_text(text, delay_ms=delay_ms)
+
         mode = None
 
     async for event in kbd.async_read_loop():

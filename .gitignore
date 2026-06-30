@@ -1,3 +1,4 @@
 .whisper-cpp/
 __pycache__/
 *.pyc
+gschemas.compiled

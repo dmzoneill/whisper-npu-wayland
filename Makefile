@@ -24,7 +24,9 @@ HF_ORG := OpenVINO
 .PHONY: help install install-python install-system install-whisper-cpp \
         install-services install-permissions install-models enable start \
         stop restart status logs logs-server logs-cpp logs-ptt \
-        test uninstall clean
+        test uninstall clean \
+        extension extension-install extension-uninstall extension-enable \
+        extension-disable extension-reload extension-dev extension-logs
 
 .DEFAULT_GOAL := help
 
@@ -268,3 +270,49 @@ clean: ## Remove downloaded models (destructive, prompts for confirmation)
 	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	rm -rf $(HOME)/.whisper/models
 	rm -rf $(HOME)/.cache/whisper
+
+# ----------------------------------------------------------------------------
+# GNOME Extension
+# ----------------------------------------------------------------------------
+
+EXTENSION_DIR     := $(PROJECT_DIR)/gnome-extension
+EXTENSION_UUID    := whisper-npu@dmz.oneill
+EXTENSION_INSTALL := $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
+SCHEMA_DIR        := $(HOME)/.local/share/glib-2.0/schemas
+
+extension-install: ## Install GNOME extension (symlink + schemas)
+	mkdir -p $(SCHEMA_DIR)
+	glib-compile-schemas $(EXTENSION_DIR)/schemas/
+	cp $(EXTENSION_DIR)/schemas/*.gschema.xml $(SCHEMA_DIR)/
+	glib-compile-schemas $(SCHEMA_DIR)/
+	ln -snf $(EXTENSION_DIR) $(EXTENSION_INSTALL)
+	@echo "Extension installed. Enable with: make extension-enable"
+	@echo "On Wayland, log out and back in to load the extension."
+
+extension-uninstall: extension-disable ## Uninstall GNOME extension
+	rm -f $(EXTENSION_INSTALL)
+	rm -f $(SCHEMA_DIR)/org.gnome.shell.extensions.whisper-npu.gschema.xml
+	glib-compile-schemas $(SCHEMA_DIR)/
+	@echo "Extension uninstalled."
+
+extension-enable: ## Enable GNOME extension
+	gnome-extensions enable $(EXTENSION_UUID)
+
+extension-disable: ## Disable GNOME extension
+	-gnome-extensions disable $(EXTENSION_UUID)
+
+extension-reload: extension-disable extension-enable ## Reload GNOME extension
+	@echo "Extension reloaded (JS/CSS changes may require logout/login on Wayland)"
+
+extension-dev: extension-install extension-enable ## Install and enable GNOME extension for development
+	@echo ""
+	@echo "========================================"
+	@echo "Whisper NPU extension installed and enabled!"
+	@echo "========================================"
+	@echo ""
+	@echo "Watch logs: make extension-logs"
+	@echo ""
+	@echo "Note: JS/CSS changes require logout/login on Wayland."
+
+extension-logs: ## Show GNOME Shell logs (for extension debugging)
+	journalctl -f -o cat /usr/bin/gnome-shell
