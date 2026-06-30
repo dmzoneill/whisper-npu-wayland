@@ -331,15 +331,24 @@ const WhisperIndicator = GObject.registerClass(
 
       // STT model selection
       this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Model'))
+      this._modelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
       this.menu.addMenuItem(this._modelSection)
 
       // STT model download
       this._downloadSection = new PopupMenu.PopupSubMenuMenuItem(_('Download Models'))
+      this._downloadSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
       this.menu.addMenuItem(this._downloadSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       // LLM model section
       this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
+      this._llmModelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
       this.menu.addMenuItem(this._llmModelSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
@@ -629,17 +638,18 @@ const WhisperIndicator = GObject.registerClass(
     }
 
     async _startLlmDownload () {
+      logDebug('Download LLM button clicked')
       const org = this._settings.get_string('hf-org')
       const modelName = 'Qwen2.5-1.5B-Instruct-int4-ov'
       Main.notify(_('Whisper NPU'), _(`Downloading ${modelName}... This may take a while.`))
       try {
         await downloadLlmModel(org, modelName)
         Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
-        this._populateLlmModelSection()
       } catch (e) {
         logDebug(`LLM download failed: ${e.message}`)
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
       }
+      this._populateLlmModelSection()
     }
 
     // -- Apply settings -----------------------------------------------------
