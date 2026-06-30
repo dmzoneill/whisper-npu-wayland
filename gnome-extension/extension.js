@@ -168,7 +168,6 @@ const WhisperIndicator = GObject.registerClass(
       this._settings = extension.getSettings()
       this._connected = false
       this._currentModel = null
-      this._downloadCancellable = null
       this._cachedRemoteModels = []
       this._cachedRemoteLlmModels = []
       this._cacheReady = false
@@ -240,7 +239,6 @@ const WhisperIndicator = GObject.registerClass(
         this._cacheReady = true
         logDebug(`Preloaded ${this._cachedRemoteModels.length} STT and ${this._cachedRemoteLlmModels.length} LLM remote models`)
 
-        this._populateDownloadSection()
         this._populateModelSection()
         this._populateLlmModelSection()
       } catch (e) {
@@ -332,19 +330,12 @@ const WhisperIndicator = GObject.registerClass(
       this.menu.addMenuItem(this._bypassToggle)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      // STT model selection
-      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Model'))
+      // STT models (installed + available downloads)
+      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
       this._modelSection.menu.addMenuItem(
         new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
       )
       this.menu.addMenuItem(this._modelSection)
-
-      // STT model download
-      this._downloadSection = new PopupMenu.PopupSubMenuMenuItem(_('Download Models'))
-      this._downloadSection.menu.addMenuItem(
-        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-      )
-      this.menu.addMenuItem(this._downloadSection)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       // LLM model section
@@ -483,22 +474,51 @@ const WhisperIndicator = GObject.registerClass(
       const localModels = listLocalModels()
 
       if (localModels.length === 0) {
-        const noModels = new PopupMenu.PopupMenuItem(_('No models found'), { reactive: false })
+        const noModels = new PopupMenu.PopupMenuItem(_('No models installed'), { reactive: false })
         this._modelSection.menu.addMenuItem(noModels)
-        return
-      }
-
-      for (const model of localModels) {
-        const item = new PopupMenu.PopupMenuItem(model)
-        if (model === this._currentModel) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
+      } else {
+        for (const model of localModels) {
+          const item = new PopupMenu.PopupMenuItem(model)
+          if (model === this._currentModel) {
+            item.setOrnament(PopupMenu.Ornament.DOT)
+          }
+          item.connect('activate', () => this._switchModel(model))
+          this._modelSection.menu.addMenuItem(item)
         }
-        item.connect('activate', () => this._switchModel(model))
-        this._modelSection.menu.addMenuItem(item)
       }
 
-      const activeLabel = this._currentModel || localModels[0]
-      this._modelSection.label.set_text(_(`Model: ${activeLabel}`))
+      const available = this._cachedRemoteModels.filter(
+        m => !localModels.includes(m.name)
+      )
+
+      if (available.length > 0) {
+        this._modelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+        const downloadHeader = new PopupMenu.PopupMenuItem(_('Available Downloads'), { reactive: false })
+        downloadHeader.label.add_style_class_name('whisper-status-label')
+        this._modelSection.menu.addMenuItem(downloadHeader)
+
+        const org = this._settings.get_string('hf-org')
+        for (const model of available) {
+          const downloads = model.downloads > 1000
+            ? `${(model.downloads / 1000).toFixed(0)}k`
+            : `${model.downloads}`
+          const item = new PopupMenu.PopupMenuItem(`${model.name}  (${downloads} downloads)`)
+          item.connect('activate', () => this._startDownload(org, model.name))
+          this._modelSection.menu.addMenuItem(item)
+        }
+      }
+
+      this._modelSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
+      refreshItem.connect('activate', () => this._refreshModelCache())
+      this._modelSection.menu.addMenuItem(refreshItem)
+
+      const activeLabel = this._currentModel || (localModels.length > 0 ? localModels[0] : '')
+      if (activeLabel) {
+        this._modelSection.label.set_text(_(`STT: ${activeLabel}`))
+      }
     }
 
     async _switchModel (modelName) {
@@ -535,52 +555,10 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- STT model download -------------------------------------------------
 
-    _populateDownloadSection () {
-      this._downloadSection.menu.removeAll()
-
-      const org = this._settings.get_string('hf-org')
-      const remoteModels = this._cachedRemoteModels
-      const localModels = listLocalModels()
-
-      if (!this._cacheReady) {
-        const loadingItem = new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-        this._downloadSection.menu.addMenuItem(loadingItem)
-        return
-      }
-
-      if (remoteModels.length === 0) {
-        const noModels = new PopupMenu.PopupMenuItem(_('No models found'), { reactive: false })
-        this._downloadSection.menu.addMenuItem(noModels)
-        return
-      }
-
-      const available = remoteModels.filter(m => !localModels.includes(m.name))
-
-      if (available.length === 0) {
-        const allInstalled = new PopupMenu.PopupMenuItem(_('All models installed'), { reactive: false })
-        this._downloadSection.menu.addMenuItem(allInstalled)
-      } else {
-        for (const model of available) {
-          const downloads = model.downloads > 1000
-            ? `${(model.downloads / 1000).toFixed(0)}k`
-            : `${model.downloads}`
-          const item = new PopupMenu.PopupMenuItem(`${model.name}  (${downloads} downloads)`)
-          item.connect('activate', () => this._startDownload(org, model.name))
-          this._downloadSection.menu.addMenuItem(item)
-        }
-      }
-
-      this._downloadSection.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      const refreshItem = new PopupMenu.PopupMenuItem(_('Refresh List'))
-      refreshItem.connect('activate', () => this._refreshDownloadCache())
-      this._downloadSection.menu.addMenuItem(refreshItem)
-    }
-
-    async _refreshDownloadCache () {
+    async _refreshModelCache () {
       const org = this._settings.get_string('hf-org')
       this._cachedRemoteModels = await this._hfClient.searchModels(org) || []
-      this._populateDownloadSection()
+      this._populateModelSection()
     }
 
     async _startDownload (org, modelName) {
@@ -590,12 +568,11 @@ const WhisperIndicator = GObject.registerClass(
       try {
         await downloadModel(org, modelName)
         Main.notify(_('Whisper NPU'), _(`Downloaded ${modelName} successfully`))
-        this._populateModelSection()
-        this._populateDownloadSection()
       } catch (e) {
         logDebug(`Download failed: ${e.message}`)
         Main.notify(_('Whisper NPU'), _(`Download failed: ${e.message}`))
       }
+      this._populateModelSection()
     }
 
     // -- LLM model management -----------------------------------------------
@@ -720,10 +697,6 @@ const WhisperIndicator = GObject.registerClass(
       if (this._settingsChangedId) {
         this._settings.disconnect(this._settingsChangedId)
         this._settingsChangedId = null
-      }
-      if (this._downloadCancellable) {
-        this._downloadCancellable.cancel()
-        this._downloadCancellable = null
       }
       if (this._client) {
         this._client.destroy()
