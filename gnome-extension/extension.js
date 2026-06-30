@@ -107,11 +107,21 @@ const LanguageBuddyOverlay = GObject.registerClass(
         this.add_child(card)
       }
 
+      const monitor = Main.layoutManager.primaryMonitor
+      if (!monitor) return
+
+      const maxH = monitor.height - OVERLAY_PADDING * 2
+      this.style = `max-height: ${maxH}px;`
+
+      this.set_position(monitor.x + monitor.width, monitor.y + monitor.height)
       this.visible = true
 
-      this._positionId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+      this._positionId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
         this._positionId = null
-        this._applyPosition()
+        this.set_position(
+          monitor.x + monitor.width - this.width - OVERLAY_PADDING,
+          monitor.y + monitor.height - this.height - OVERLAY_PADDING
+        )
         return GLib.SOURCE_REMOVE
       })
 
@@ -121,25 +131,6 @@ const LanguageBuddyOverlay = GObject.registerClass(
           return GLib.SOURCE_REMOVE
         })
       }
-    }
-
-    _applyPosition () {
-      const monitor = Main.layoutManager.primaryMonitor
-      if (!monitor) return
-
-      const maxW = monitor.width - OVERLAY_PADDING * 2
-      const maxH = monitor.height - OVERLAY_PADDING * 2
-      const w = Math.min(this.width || 480, maxW)
-      const h = Math.min(this.height || 200, maxH)
-
-      if (this.height > maxH) {
-        this.style = `max-height: ${maxH}px;`
-      }
-
-      this.set_position(
-        monitor.x + monitor.width - w - OVERLAY_PADDING,
-        monitor.y + monitor.height - h - OVERLAY_PADDING
-      )
     }
 
     _dismiss () {
