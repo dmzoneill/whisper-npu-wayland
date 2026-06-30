@@ -230,11 +230,8 @@ export async function downloadModel (org, modelName, cancellable = null) {
   }
 
   const url = `https://huggingface.co/${org}/${modelName}`
-  return execCommand(
-    ['git', 'clone', url, dest],
-    null,
-    cancellable
-  )
+  await execCommand(['git', 'clone', url, dest], null, cancellable)
+  await execCommand(['git', '-C', dest, 'lfs', 'pull'], null, cancellable)
 }
 
 export function getLlmModelsDir () {
@@ -279,7 +276,8 @@ export async function downloadLlmModel (org, modelName, cancellable = null) {
   }
 
   const url = `https://huggingface.co/${org}/${modelName}`
-  return execCommand(['git', 'clone', url, dest], null, cancellable)
+  await execCommand(['git', 'clone', url, dest], null, cancellable)
+  await execCommand(['git', '-C', dest, 'lfs', 'pull'], null, cancellable)
 }
 
 export async function typeText (text, delayMs = 4) {
