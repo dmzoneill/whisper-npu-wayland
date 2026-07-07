@@ -38,6 +38,7 @@ jobs:
             pytest-asyncio \
             aiohttp \
             flask \
+            numpy \
             PyQt6
 
       - name: Run tests
