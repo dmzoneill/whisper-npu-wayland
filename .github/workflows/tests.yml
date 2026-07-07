@@ -26,10 +26,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libdbus-1-dev \
-            libgirepository1.0-dev \
-            gir1.2-glib-2.0 \
-            python3-gi \
-            pkg-config
+            pkg-config \
+            libegl1 \
+            libxkbcommon0
 
       - name: Install Python dependencies
         run: |
@@ -41,7 +40,6 @@ jobs:
             aiohttp \
             flask \
             dbus-python \
-            PyGObject \
             PyQt6
 
       - name: Run tests
