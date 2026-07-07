@@ -25,10 +25,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libdbus-1-dev \
-            pkg-config \
             libegl1 \
-            libxkbcommon0
+            libxkbcommon0 \
+            libgl1
 
       - name: Install Python dependencies
         run: |
@@ -39,7 +38,6 @@ jobs:
             pytest-asyncio \
             aiohttp \
             flask \
-            dbus-python \
             PyQt6
 
       - name: Run tests
