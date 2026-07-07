@@ -3,6 +3,7 @@ import Gio from 'gi://Gio'
 import GObject from 'gi://GObject'
 import St from 'gi://St'
 import Clutter from 'gi://Clutter'
+import Shell from 'gi://Shell'
 
 import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js'
 import * as Main from 'resource:///org/gnome/shell/ui/main.js'
@@ -17,9 +18,11 @@ import {
   downloadModel,
   downloadLlmModel,
   writeServiceOverride,
+  writePttServiceOverride,
   restartService,
   typeText,
   backspaceN,
+  saveToFile,
   logDebug
 } from './utils.js'
 
@@ -33,6 +36,34 @@ const HOTKEYS = [
   'KEY_PAUSE'
 ]
 const DEFAULT_TONES = ['diplomatic', 'professional']
+const LANGUAGES = [
+  ['Auto', ''],
+  ['English', 'en'],
+  ['German', 'de'],
+  ['French', 'fr'],
+  ['Spanish', 'es'],
+  ['Italian', 'it'],
+  ['Portuguese', 'pt'],
+  ['Dutch', 'nl'],
+  ['Polish', 'pl'],
+  ['Japanese', 'ja'],
+  ['Chinese', 'zh'],
+  ['Korean', 'ko']
+]
+const TRANSLATE_TARGETS = [
+  ['Disabled', ''],
+  ['English', 'English'],
+  ['German', 'German'],
+  ['French', 'French'],
+  ['Spanish', 'Spanish'],
+  ['Italian', 'Italian'],
+  ['Portuguese', 'Portuguese'],
+  ['Dutch', 'Dutch'],
+  ['Polish', 'Polish'],
+  ['Japanese', 'Japanese'],
+  ['Chinese', 'Chinese'],
+  ['Korean', 'Korean']
+]
 
 const DBUS_IFACE = `
 <node>
@@ -40,6 +71,19 @@ const DBUS_IFACE = `
     <method name="HandleTranscription">
       <arg type="s" direction="in" name="text"/>
       <arg type="b" direction="out" name="handled"/>
+    </method>
+    <method name="HandleTranscriptionWithContext">
+      <arg type="s" direction="in" name="text"/>
+      <arg type="s" direction="in" name="context_json"/>
+      <arg type="b" direction="out" name="handled"/>
+    </method>
+    <method name="GetFocusedApp">
+      <arg type="s" direction="out" name="app_id"/>
+      <arg type="s" direction="out" name="window_title"/>
+    </method>
+    <method name="ShowHistoryPicker">
+      <arg type="s" direction="in" name="items_json"/>
+      <arg type="b" direction="out" name="shown"/>
     </method>
   </interface>
 </node>`
@@ -203,6 +247,141 @@ const LanguageBuddyOverlay = GObject.registerClass(
 )
 
 // ---------------------------------------------------------------------------
+// History picker overlay — floating card list at bottom-right
+// ---------------------------------------------------------------------------
+
+const HistoryOverlay = GObject.registerClass(
+  class HistoryOverlay extends St.BoxLayout {
+    _init () {
+      super._init({
+        vertical: true,
+        style_class: 'whisper-overlay',
+        reactive: true,
+        visible: false
+      })
+      this._timeoutId = null
+    }
+
+    show (items, timeoutSec = 10) {
+      this.destroy_all_children()
+
+      const headerBox = new St.BoxLayout({ x_expand: true })
+      const headerLabel = new St.Label({
+        text: _('Transcription History'),
+        style_class: 'whisper-overlay-header',
+        x_expand: true
+      })
+      const dismissBtn = new St.Button({
+        style_class: 'whisper-overlay-dismiss',
+        child: new St.Label({ text: '✕' })
+      })
+      dismissBtn.connect('clicked', () => this._dismiss())
+      headerBox.add_child(headerLabel)
+      headerBox.add_child(dismissBtn)
+      this.add_child(headerBox)
+
+      for (const item of items) {
+        const card = new St.Button({
+          style_class: 'whisper-overlay-card',
+          x_expand: true,
+          reactive: true,
+          track_hover: true
+        })
+
+        const cardBox = new St.BoxLayout({ vertical: true })
+
+        const ago = this._timeAgo(item.ts)
+        const timeLabel = new St.Label({
+          text: ago,
+          style_class: 'whisper-overlay-tone'
+        })
+        cardBox.add_child(timeLabel)
+
+        const textLabel = new St.Label({
+          text: item.text.length > 120 ? item.text.substring(0, 120) + '...' : item.text,
+          style_class: 'whisper-overlay-text'
+        })
+        textLabel.clutter_text.set_line_wrap(true)
+        textLabel.clutter_text.set_ellipsize(0)
+        cardBox.add_child(textLabel)
+
+        card.set_child(cardBox)
+        const fullText = item.text
+        card.connect('clicked', () => {
+          this._dismiss()
+          typeText(fullText).catch(e => logDebug(`typeText failed: ${e.message}`))
+        })
+        this.add_child(card)
+      }
+
+      this._showAndPosition()
+
+      if (timeoutSec > 0) {
+        this._timeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, timeoutSec, () => {
+          this._dismiss()
+          return GLib.SOURCE_REMOVE
+        })
+      }
+    }
+
+    _timeAgo (ts) {
+      const now = Date.now() / 1000
+      const diff = now - ts
+      if (diff < 60) return 'just now'
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+      return `${Math.floor(diff / 86400)}d ago`
+    }
+
+    _showAndPosition () {
+      const monitor = Main.layoutManager.primaryMonitor
+      if (!monitor) return
+      const maxH = monitor.height - OVERLAY_PADDING * 2
+      this.style = `max-height: ${maxH}px;`
+      this.set_position(monitor.x + monitor.width, monitor.y + monitor.height)
+      this.visible = true
+      this._reposition()
+    }
+
+    _reposition () {
+      if (this._positionId) {
+        GLib.source_remove(this._positionId)
+        this._positionId = null
+      }
+      this._positionId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+        this._positionId = null
+        const monitor = Main.layoutManager.primaryMonitor
+        if (!monitor) return GLib.SOURCE_REMOVE
+        this.set_position(
+          monitor.x + monitor.width - this.width - OVERLAY_PADDING,
+          monitor.y + monitor.height - this.height - OVERLAY_PADDING
+        )
+        return GLib.SOURCE_REMOVE
+      })
+    }
+
+    _dismiss () {
+      if (this._positionId) {
+        GLib.source_remove(this._positionId)
+        this._positionId = null
+      }
+      if (this._timeoutId) {
+        GLib.source_remove(this._timeoutId)
+        this._timeoutId = null
+      }
+      this.visible = false
+      this.style = null
+      this.destroy_all_children()
+    }
+
+    destroy () {
+      this._dismiss()
+      super.destroy()
+    }
+  }
+)
+
+// ---------------------------------------------------------------------------
 // Panel indicator with dropdown menu
 // ---------------------------------------------------------------------------
 
@@ -250,9 +429,15 @@ const WhisperIndicator = GObject.registerClass(
         }
       })
 
-      // Overlay
+      // Overlays
       this._overlay = new LanguageBuddyOverlay()
       Main.layoutManager.addChrome(this._overlay, {
+        affectsStruts: false,
+        trackFullscreen: false
+      })
+
+      this._historyOverlay = new HistoryOverlay()
+      Main.layoutManager.addChrome(this._historyOverlay, {
         affectsStruts: false,
         trackFullscreen: false
       })
@@ -305,7 +490,50 @@ const WhisperIndicator = GObject.registerClass(
       return true
     }
 
-    async _processTranscription (text) {
+    HandleTranscriptionWithContext (text, contextJson) {
+      const enabled = this._settings.get_boolean('language-buddy-enabled')
+      if (!enabled) return false
+
+      logDebug(`Context-aware transcription: ${text.substring(0, 80)}`)
+      try {
+        const context = JSON.parse(contextJson)
+        const tones = context.tones && context.tones.length > 0 ? context.tones : DEFAULT_TONES
+        this._processTranscription(text, tones)
+      } catch (e) {
+        logDebug(`Context parse error: ${e.message}`)
+        this._processTranscription(text)
+      }
+      return true
+    }
+
+    GetFocusedApp () {
+      try {
+        const focusWindow = global.display.focus_window
+        if (!focusWindow) return ['', '']
+        const tracker = Shell.WindowTracker.get_default()
+        const app = tracker.get_window_app(focusWindow)
+        const appId = app ? app.get_id() : ''
+        const title = focusWindow.get_title() || ''
+        return [appId, title]
+      } catch (e) {
+        logDebug(`GetFocusedApp error: ${e.message}`)
+        return ['', '']
+      }
+    }
+
+    ShowHistoryPicker (itemsJson) {
+      try {
+        const items = JSON.parse(itemsJson)
+        if (!items || items.length === 0) return false
+        this._historyOverlay.show(items, 10)
+        return true
+      } catch (e) {
+        logDebug(`ShowHistoryPicker error: ${e.message}`)
+        return false
+      }
+    }
+
+    async _processTranscription (text, tones = null) {
       const bypass = this._settings.get_boolean('language-buddy-bypass')
 
       if (bypass) {
@@ -313,7 +541,9 @@ const WhisperIndicator = GObject.registerClass(
       }
 
       const timeoutSec = this._settings.get_int('language-buddy-timeout')
-      const tones = DEFAULT_TONES
+      tones = tones || (text.length > 50
+        ? [...DEFAULT_TONES, 'summarize']
+        : DEFAULT_TONES)
 
       const onSelect = bypass
         ? async (selectedText) => {
@@ -420,6 +650,150 @@ const WhisperIndicator = GObject.registerClass(
       this._buildHotkeyGroup(this._hotkeySection)
       this.menu.addMenuItem(this._hotkeySection)
 
+      // Language selector
+      const currentLang = this._settings.get_string('language')
+      const langLabel = LANGUAGES.find(l => l[1] === currentLang)
+      this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
+      )
+      this._buildLanguageGroup(this._languageSection)
+      this.menu.addMenuItem(this._languageSection)
+
+      // Recall key selector
+      this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
+      )
+      this._buildRecallKeyGroup(this._recallKeySection)
+      this.menu.addMenuItem(this._recallKeySection)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      // Feature toggles
+      this._voiceCommandsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Voice Commands'),
+        this._settings.get_boolean('voice-commands-enabled')
+      )
+      this._voiceCommandsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('voice-commands-enabled', state)
+      })
+      this.menu.addMenuItem(this._voiceCommandsToggle)
+
+      this._notificationsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Notifications'),
+        this._settings.get_boolean('notifications-enabled')
+      )
+      this._notificationsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('notifications-enabled', state)
+      })
+      this.menu.addMenuItem(this._notificationsToggle)
+
+      this._autoPunctuateToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Auto-Punctuate'),
+        this._settings.get_boolean('auto-punctuate')
+      )
+      this._autoPunctuateToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('auto-punctuate', state)
+      })
+      this.menu.addMenuItem(this._autoPunctuateToggle)
+
+      this._audioFeedbackToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Audio Feedback'),
+        this._settings.get_boolean('audio-feedback-enabled')
+      )
+      this._audioFeedbackToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('audio-feedback-enabled', state)
+      })
+      this.menu.addMenuItem(this._audioFeedbackToggle)
+
+      this._formattingToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Dictation Formatting'),
+        this._settings.get_boolean('dictation-formatting-enabled')
+      )
+      this._formattingToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('dictation-formatting-enabled', state)
+      })
+      this.menu.addMenuItem(this._formattingToggle)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      // Translate To submenu
+      const currentTranslate = this._settings.get_string('translate-to')
+      const translateLabel = TRANSLATE_TARGETS.find(t => t[1] === currentTranslate)
+      this._translateSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Translate To: ${translateLabel ? translateLabel[0] : 'Disabled'}`)
+      )
+      this._buildTranslateGroup(this._translateSection)
+      this.menu.addMenuItem(this._translateSection)
+
+      // VAD Threshold submenu
+      this._vadSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`VAD Threshold: ${this._settings.get_int('vad-threshold')} dB`)
+      )
+      const vadOptions = [
+        ['-20 dB (aggressive)', -20],
+        ['-30 dB', -30],
+        ['-40 dB (default)', -40],
+        ['-50 dB', -50],
+        ['-60 dB (sensitive)', -60]
+      ]
+      const currentVad = this._settings.get_int('vad-threshold')
+      for (const [label, value] of vadOptions) {
+        const item = new PopupMenu.PopupMenuItem(label)
+        if (value === currentVad) item.setOrnament(PopupMenu.Ornament.DOT)
+        item.connect('activate', () => {
+          this._settings.set_int('vad-threshold', value)
+          this._vadSection.label.set_text(`VAD Threshold: ${value} dB`)
+          const items = this._vadSection.menu._getMenuItems()
+          for (const [i, mi] of items.entries()) {
+            if (mi.label && i < vadOptions.length) {
+              mi.setOrnament(vadOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
+            }
+          }
+        })
+        this._vadSection.menu.addMenuItem(item)
+      }
+      this.menu.addMenuItem(this._vadSection)
+
+      // Stream Interval submenu
+      this._streamIntervalSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Stream Interval: ${this._settings.get_double('stream-interval')}s`)
+      )
+      const intervalOptions = [
+        ['1.0s (fast)', 1.0],
+        ['2.0s', 2.0],
+        ['3.0s (default)', 3.0],
+        ['5.0s', 5.0],
+        ['10.0s (slow)', 10.0]
+      ]
+      const currentInterval = this._settings.get_double('stream-interval')
+      for (const [label, value] of intervalOptions) {
+        const item = new PopupMenu.PopupMenuItem(label)
+        if (value === currentInterval) item.setOrnament(PopupMenu.Ornament.DOT)
+        item.connect('activate', () => {
+          this._settings.set_double('stream-interval', value)
+          this._streamIntervalSection.label.set_text(`Stream Interval: ${value}s`)
+          const items = this._streamIntervalSection.menu._getMenuItems()
+          for (const [i, mi] of items.entries()) {
+            if (mi.label && i < intervalOptions.length) {
+              mi.setOrnament(intervalOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
+            }
+          }
+        })
+        this._streamIntervalSection.menu.addMenuItem(item)
+      }
+      this.menu.addMenuItem(this._streamIntervalSection)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      // Export History submenu
+      this._exportSection = new PopupMenu.PopupSubMenuMenuItem(_('Export History'))
+      for (const [label, fmt] of [['JSON', 'json'], ['Markdown', 'markdown'], ['SRT (Subtitles)', 'srt']]) {
+        const item = new PopupMenu.PopupMenuItem(label)
+        item.connect('activate', () => this._exportHistory(fmt))
+        this._exportSection.menu.addMenuItem(item)
+      }
+      this.menu.addMenuItem(this._exportSection)
+
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       this._applyItem = new PopupMenu.PopupMenuItem(_('Apply & Restart Services'))
@@ -448,6 +822,105 @@ const WhisperIndicator = GObject.registerClass(
           this._settings.set_string(settingKey, option)
           section.label.set_text(`${settingKey.charAt(0).toUpperCase() + settingKey.slice(1)}: ${option}`)
           this._updateRadioOrnaments(section, option)
+        })
+        section.menu.addMenuItem(item)
+      }
+    }
+
+    _buildLanguageGroup (section) {
+      const current = this._settings.get_string('language')
+      for (const [label, code] of LANGUAGES) {
+        const item = new PopupMenu.PopupMenuItem(label)
+        if (code === current) {
+          item.setOrnament(PopupMenu.Ornament.DOT)
+        }
+        item.connect('activate', () => {
+          this._settings.set_string('language', code)
+          section.label.set_text(`Language: ${label}`)
+          this._updateLanguageOrnaments(section, code)
+        })
+        section.menu.addMenuItem(item)
+      }
+    }
+
+    _updateLanguageOrnaments (section, selectedCode) {
+      const items = section.menu._getMenuItems()
+      for (const [i, item] of items.entries()) {
+        if (item.label && i < LANGUAGES.length) {
+          item.setOrnament(
+            LANGUAGES[i][1] === selectedCode
+              ? PopupMenu.Ornament.DOT
+              : PopupMenu.Ornament.NONE
+          )
+        }
+      }
+    }
+
+    _buildTranslateGroup (section) {
+      const current = this._settings.get_string('translate-to')
+      for (const [label, value] of TRANSLATE_TARGETS) {
+        const item = new PopupMenu.PopupMenuItem(label)
+        if (value === current) {
+          item.setOrnament(PopupMenu.Ornament.DOT)
+        }
+        item.connect('activate', () => {
+          this._settings.set_string('translate-to', value)
+          section.label.set_text(`Translate To: ${label}`)
+          const items = section.menu._getMenuItems()
+          for (const [i, menuItem] of items.entries()) {
+            if (menuItem.label && i < TRANSLATE_TARGETS.length) {
+              menuItem.setOrnament(
+                TRANSLATE_TARGETS[i][1] === value
+                  ? PopupMenu.Ornament.DOT
+                  : PopupMenu.Ornament.NONE
+              )
+            }
+          }
+        })
+        section.menu.addMenuItem(item)
+      }
+    }
+
+    async _exportHistory (format) {
+      try {
+        const result = await this._client.exportHistory(format)
+        if (!result) {
+          Main.notify(_('Whisper NPU'), _('No history to export'))
+          return
+        }
+        const ext = format === 'markdown' ? 'md' : format
+        const homePath = GLib.get_home_dir()
+        const filePath = GLib.build_filenamev([homePath, `whisper-history.${ext}`])
+        const content = format === 'json' ? JSON.stringify(result, null, 2) : result
+        saveToFile(filePath, content)
+        Main.notify(_('Whisper NPU'), _(`History exported to ~/whisper-history.${ext}`))
+      } catch (e) {
+        logDebug(`Export failed: ${e.message}`)
+        Main.notify(_('Whisper NPU'), _(`Export failed: ${e.message}`))
+      }
+    }
+
+    _buildRecallKeyGroup (section) {
+      const current = this._settings.get_string('recall-key')
+      for (const key of HOTKEYS) {
+        const label = this._formatHotkey(key)
+        const item = new PopupMenu.PopupMenuItem(label)
+        if (key === current) {
+          item.setOrnament(PopupMenu.Ornament.DOT)
+        }
+        item.connect('activate', () => {
+          this._settings.set_string('recall-key', key)
+          section.label.set_text(`Recall Key: ${label}`)
+          const items = section.menu._getMenuItems()
+          for (const [i, menuItem] of items.entries()) {
+            if (menuItem.label) {
+              menuItem.setOrnament(
+                HOTKEYS[i] === key
+                  ? PopupMenu.Ornament.DOT
+                  : PopupMenu.Ornament.NONE
+              )
+            }
+          }
         })
         section.menu.addMenuItem(item)
       }
@@ -741,13 +1214,37 @@ const WhisperIndicator = GObject.registerClass(
       const device = this._settings.get_string('device')
       const backend = this._settings.get_string('backend')
       const hotkey = this._settings.get_string('hotkey')
+      const lang = this._settings.get_string('language')
+      const recallKey = this._settings.get_string('recall-key')
+      const voiceCommands = this._settings.get_boolean('voice-commands-enabled')
+      const notifications = this._settings.get_boolean('notifications-enabled')
+      const vadThreshold = this._settings.get_int('vad-threshold')
+      const streamInterval = this._settings.get_double('stream-interval')
+      const autoPunctuate = this._settings.get_boolean('auto-punctuate')
+      const translateTo = this._settings.get_string('translate-to')
+      const audioFeedback = this._settings.get_boolean('audio-feedback-enabled')
+      const formatting = this._settings.get_boolean('dictation-formatting-enabled')
 
-      logDebug(`Applying settings: device=${device} backend=${backend} hotkey=${hotkey}`)
+      logDebug(`Applying settings: device=${device} backend=${backend} hotkey=${hotkey} lang=${lang}`)
 
       try {
         await writeServiceOverride('whisper-server.service', {
           WHISPER_DEVICE: device
         })
+
+        const pttEnv = { XDG_SESSION_TYPE: 'wayland' }
+        if (lang) pttEnv.WHISPER_LANGUAGE = lang
+        if (autoPunctuate) pttEnv.WHISPER_AUTO_PUNCTUATE = '1'
+        if (translateTo) pttEnv.WHISPER_TRANSLATE_TO = translateTo
+        if (!audioFeedback) pttEnv.WHISPER_NO_SOUND = '1'
+        if (!formatting) pttEnv.WHISPER_NO_FORMATTING = '1'
+
+        const pttArgs = ['--key', hotkey, '--backend', backend, '--recall-key', recallKey,
+          '--vad-threshold', String(vadThreshold), '--stream-interval', String(streamInterval)]
+        if (!voiceCommands) pttArgs.push('--no-commands')
+        if (!notifications) pttArgs.push('--no-notify')
+
+        await writePttServiceOverride(pttEnv, pttArgs)
 
         await restartService('whisper-server.service')
         await restartService('push-to-talk.service')
@@ -778,6 +1275,11 @@ const WhisperIndicator = GObject.registerClass(
         Main.layoutManager.removeChrome(this._overlay)
         this._overlay.destroy()
         this._overlay = null
+      }
+      if (this._historyOverlay) {
+        Main.layoutManager.removeChrome(this._historyOverlay)
+        this._historyOverlay.destroy()
+        this._historyOverlay = null
       }
       if (this._settingsChangedId) {
         this._settings.disconnect(this._settingsChangedId)

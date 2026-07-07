@@ -1,10 +1,14 @@
-.PHONY: install uninstall dev reload enable disable logs clean
+.PHONY: install uninstall dev reload enable disable logs preview preview-stop deps clean
 
 SHELL := /bin/bash
 CWD := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 UUID = whisper-npu@dmz.oneill
 INSTALL_DIR = ~/.local/share/gnome-shell/extensions/$(UUID)
 SCHEMA_DIR = ~/.local/share/glib-2.0/schemas
+NESTED_RESOLUTION ?= 1280x800
+
+# Fedora package names — adjust for other distros
+GNOME_DEPS = gnome-shell mutter dbus-x11 dbus-tools
 
 install:
 	mkdir -p $(SCHEMA_DIR)
@@ -39,6 +43,30 @@ dev: install enable
 	@echo "Watch logs: make logs"
 	@echo ""
 	@echo "Note: JS/CSS changes require logout/login on Wayland."
+
+# ---------- Dependencies ----------------------------------
+
+deps:
+	@echo "Installing GNOME preview dependencies..."
+	sudo dnf install -y $(GNOME_DEPS)
+	@echo "Dependencies installed."
+
+# ---------- Nested preview (no logout required) ----------
+
+preview: deps install
+	@echo "Starting nested GNOME Shell ($(NESTED_RESOLUTION))..."
+	@echo "The extension will load inside the nested window."
+	@echo "Close the window or press Ctrl+C to stop."
+	@echo ""
+	env MUTTER_DEBUG_DUMMY_MODE_SPECS=$(NESTED_RESOLUTION) \
+		dbus-run-session -- gnome-shell --nested-wayland 2>&1 | \
+		grep --line-buffered -E '\[whisper-npu\]|error|warning' || true
+
+preview-stop:
+	-pkill -f "gnome-shell --nested-wayland" 2>/dev/null
+	@echo "Nested session stopped."
+
+# ----------------------------------------------------------
 
 logs:
 	journalctl -f -o cat /usr/bin/gnome-shell

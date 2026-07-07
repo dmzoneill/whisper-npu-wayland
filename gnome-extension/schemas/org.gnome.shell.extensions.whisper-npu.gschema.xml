@@ -62,5 +62,59 @@
       <description>Seconds before the Language Buddy overlay auto-dismisses (0 to disable)</description>
     </key>
 
+    <key name="language" type="s">
+      <default>''</default>
+      <summary>Transcription language</summary>
+      <description>ISO language code for multilingual models (empty for auto-detect)</description>
+    </key>
+
+    <key name="voice-commands-enabled" type="b">
+      <default>true</default>
+      <summary>Enable voice commands</summary>
+      <description>Detect trigger phrases like "select all" or "new line" and execute them as keystrokes</description>
+    </key>
+
+    <key name="notifications-enabled" type="b">
+      <default>true</default>
+      <summary>Enable notifications</summary>
+      <description>Show desktop notifications after transcription</description>
+    </key>
+
+    <key name="vad-threshold" type="i">
+      <default>-40</default>
+      <summary>VAD threshold</summary>
+      <description>Voice activity detection silence threshold in dB (lower = more sensitive)</description>
+    </key>
+
+    <key name="recall-key" type="s">
+      <default>'KEY_PAUSE'</default>
+      <summary>History recall hotkey</summary>
+      <description>evdev key name to show transcription history picker</description>
+    </key>
+
+    <key name="auto-punctuate" type="b">
+      <default>false</default>
+      <summary>Auto-punctuate</summary>
+      <description>Post-process transcriptions through the LLM to add punctuation and capitalization</description>
+    </key>
+
+    <key name="translate-to" type="s">
+      <default>''</default>
+      <summary>Translate to language</summary>
+      <description>Target language for LLM-powered translation of transcriptions (empty to disable)</description>
+    </key>
+
+    <key name="audio-feedback-enabled" type="b">
+      <default>true</default>
+      <summary>Audio feedback</summary>
+      <description>Play sounds on recording start, stop, and transcription complete</description>
+    </key>
+
+    <key name="dictation-formatting-enabled" type="b">
+      <default>true</default>
+      <summary>Dictation formatting</summary>
+      <description>Auto-format numbers, abbreviations, emails, and URLs in transcriptions</description>
+    </key>
+
   </schema>
 </schemalist>

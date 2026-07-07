@@ -1,0 +1,23 @@
+{
+    "KPlugin": {
+        "Id": "com.whisper.npu",
+        "Name": "Whisper NPU",
+        "Description": "Control panel for Whisper NPU speech-to-text server. Switch models, download new models from HuggingFace, and configure server options.",
+        "Icon": "audio-input-microphone",
+        "Authors": [
+            {
+                "Name": "David O Neill",
+                "Email": "dmz.oneill@gmail.com"
+            }
+        ],
+        "Category": "Utilities",
+        "License": "GPL-3.0",
+        "Website": "https://github.com/dmzoneill/whisper-npu-server",
+        "Version": "1.0"
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "X-Plasma-Provides": ["org.kde.plasma.systemtray"],
+    "KPackageStructure": "Plasma/Applet"
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Whisper NPU KDE D-Bus service (Language Buddy overlay)
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/src/whisper-npu-server/kde-plasmoid/whisper-npu-kde-service.py
+Restart=on-failure
+RestartSec=3
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=graphical-session.target

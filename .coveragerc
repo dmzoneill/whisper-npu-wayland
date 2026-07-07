@@ -1,0 +1,15 @@
+[run]
+source = .
+omit =
+    tests/*
+    server-whisper-cpp.py
+    gnome-extension/*
+    kde-plasmoid/contents/*
+
+[report]
+exclude_lines =
+    if __name__
+    def main
+    async def main
+    pragma: no cover
+show_missing = true

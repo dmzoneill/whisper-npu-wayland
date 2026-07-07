@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+
+  <kcfgfile name=""/>
+
+  <group name="General">
+    <entry name="serverHost" type="String">
+      <default>127.0.0.1</default>
+      <label>Hostname or IP of the Whisper NPU server</label>
+    </entry>
+
+    <entry name="serverPort" type="Int">
+      <default>5000</default>
+      <label>Port number of the Whisper NPU server</label>
+    </entry>
+
+    <entry name="device" type="String">
+      <default>NPU</default>
+      <label>OpenVINO inference device: NPU, CPU, or GPU</label>
+    </entry>
+
+    <entry name="backend" type="String">
+      <default>openvino</default>
+      <label>Backend engine: openvino or whisper-cpp</label>
+    </entry>
+
+    <entry name="hotkey" type="String">
+      <default>KEY_RIGHTCTRL</default>
+      <label>Push-to-talk hotkey (evdev key name)</label>
+    </entry>
+
+    <entry name="streamInterval" type="Double">
+      <default>3.0</default>
+      <label>Seconds between streaming transcription updates</label>
+    </entry>
+
+    <entry name="hfOrg" type="String">
+      <default>OpenVINO</default>
+      <label>HuggingFace organization to search for models</label>
+    </entry>
+
+    <entry name="languageBuddyEnabled" type="Bool">
+      <default>false</default>
+      <label>Enable Language Buddy overlay</label>
+    </entry>
+
+    <entry name="languageBuddyBypass" type="Bool">
+      <default>false</default>
+      <label>Type original text immediately, show overlay for alternatives</label>
+    </entry>
+
+    <entry name="languageBuddyTimeout" type="Int">
+      <default>30</default>
+      <label>Overlay auto-dismiss timeout in seconds</label>
+    </entry>
+
+    <entry name="language" type="String">
+      <default></default>
+      <label>ISO language code for transcription (empty for auto-detect)</label>
+    </entry>
+
+    <entry name="voiceCommandsEnabled" type="Bool">
+      <default>true</default>
+      <label>Enable voice command detection</label>
+    </entry>
+
+    <entry name="notificationsEnabled" type="Bool">
+      <default>true</default>
+      <label>Show desktop notifications after transcription</label>
+    </entry>
+
+    <entry name="vadThreshold" type="Int">
+      <default>-40</default>
+      <label>Voice activity detection silence threshold in dB</label>
+    </entry>
+
+    <entry name="recallKey" type="String">
+      <default>KEY_PAUSE</default>
+      <label>History recall hotkey (evdev key name)</label>
+    </entry>
+
+    <entry name="autoPunctuate" type="Bool">
+      <default>false</default>
+      <label>Post-process transcriptions through LLM for punctuation</label>
+    </entry>
+
+    <entry name="translateTo" type="String">
+      <default></default>
+      <label>Target language for LLM translation (empty to disable)</label>
+    </entry>
+
+    <entry name="audioFeedbackEnabled" type="Bool">
+      <default>true</default>
+      <label>Play sounds on recording events</label>
+    </entry>
+
+    <entry name="dictationFormattingEnabled" type="Bool">
+      <default>true</default>
+      <label>Auto-format numbers, abbreviations, emails, URLs</label>
+    </entry>
+  </group>
+
+</kcfg>

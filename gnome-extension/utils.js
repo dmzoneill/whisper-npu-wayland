@@ -109,6 +109,26 @@ export class WhisperClient {
     return this._request('PUT', '/llm/model', { model: modelName })
   }
 
+  async getMetrics () {
+    return this._request('GET', '/metrics')
+  }
+
+  async exportHistory (format = 'json', limit = 50) {
+    const message = new Soup.Message({
+      method: 'GET',
+      uri: this._uri(`/history/export?format=${format}&limit=${limit}`)
+    })
+    try {
+      const bytes = await this._sendAsync(message)
+      if (message.get_status() !== Soup.Status.OK) return null
+      const text = new TextDecoder().decode(bytes.get_data())
+      return format === 'json' ? JSON.parse(text) : text
+    } catch (e) {
+      logDebug(`Export history failed: ${e.message}`)
+      return null
+    }
+  }
+
   destroy () {
     this._session = null
   }
@@ -292,8 +312,43 @@ export async function backspaceN (n) {
   return Promise.all(promises)
 }
 
+export function saveToFile (filePath, content) {
+  const file = Gio.file_new_for_path(filePath)
+  file.replace_contents(content, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null)
+}
+
 export async function restartService (serviceName) {
   return execCommand(['systemctl', '--user', 'restart', serviceName])
+}
+
+export async function writePttServiceOverride (envVars, pttArgs) {
+  const overrideDir = GLib.build_filenamev([
+    GLib.get_home_dir(), '.config', 'systemd', 'user',
+    'push-to-talk.service.d'
+  ])
+  const overridePath = GLib.build_filenamev([overrideDir, 'override.conf'])
+
+  const dir = Gio.file_new_for_path(overrideDir)
+  try {
+    dir.make_directory_with_parents(null)
+  } catch (e) {
+    if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)) { throw e }
+  }
+
+  let content = '[Service]\n'
+  for (const [key, value] of Object.entries(envVars)) {
+    content += `Environment="${key}=${value}"\n`
+  }
+
+  const srcDir = GLib.build_filenamev([GLib.get_home_dir(), 'src', 'whisper-npu-server'])
+  const argsStr = pttArgs.map(a => `"${a}"`).join(' ')
+  content += `ExecStart=\n`
+  content += `ExecStart=/usr/bin/python3 ${srcDir}/push-to-talk.py ${argsStr}\n`
+
+  const file = Gio.file_new_for_path(overridePath)
+  file.replace_contents(content, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null)
+
+  await execCommand(['systemctl', '--user', 'daemon-reload'])
 }
 
 export async function writeServiceOverride (serviceName, envVars) {
