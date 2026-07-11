@@ -1,13 +1,10 @@
 """Tests for server-native.py — the Flask-based Whisper NPU transcription server."""
 
 import importlib
-import io
 import json
 import os
 import sqlite3
 import sys
-import tempfile
-import time
 from unittest.mock import MagicMock, patch
 
 import numpy as np

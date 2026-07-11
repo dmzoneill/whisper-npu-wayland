@@ -19,9 +19,8 @@ import urllib.request
 import dbus
 import dbus.mainloop.glib
 import dbus.service
-from gi.repository import GLib
-from PyQt6.QtCore import QTimer, Qt, QPoint, pyqtSignal, QObject, QThread
-from PyQt6.QtGui import QGuiApplication, QFont, QColor, QPalette, QCursor
+from PyQt6.QtCore import QTimer, Qt, pyqtSignal, QObject, QThread
+from PyQt6.QtGui import QGuiApplication, QFont, QColor
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPushButton, QSizePolicy, QGraphicsDropShadowEffect
@@ -480,7 +479,7 @@ class LanguageBuddyService(dbus.service.Object):
             bus = dbus.SessionBus()
             kwin = bus.get_object("org.kde.KWin", "/KWin")
             iface = dbus.Interface(kwin, "org.kde.KWin")
-            script_id = iface.loadScript("/dev/null", "whisper-npu-query")
+            iface.loadScript("/dev/null", "whisper-npu-query")
         except Exception:
             pass
 

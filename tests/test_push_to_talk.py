@@ -7,16 +7,12 @@ import json
 import math
 import os
 import signal
-import sqlite3
 import struct
 import sys
-import threading
 import wave
 from unittest.mock import (
     AsyncMock,
     MagicMock,
-    Mock,
-    call,
     patch,
 )
 
@@ -36,7 +32,7 @@ _spec.loader.exec_module(ptt)
 
 # Import conftest helpers
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "tests"))
-from conftest import make_raw_audio, make_silent_raw, make_wav_bytes
+from conftest import make_silent_raw
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

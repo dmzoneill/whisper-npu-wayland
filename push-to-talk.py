@@ -688,7 +688,7 @@ WORD_NUMS = {
 ABBREVIATIONS = {
     r"\bmister\b": "Mr.", r"\bmissus\b": "Mrs.", r"\bdoctor\b": "Dr.",
     r"\bversus\b": "vs.", r"\bet cetera\b": "etc.", r"\bfor example\b": "e.g.",
-    r"\bthat is\b": "i.e.", r"\bmister\b": "Mr.",
+    r"\bthat is\b": "i.e.",
 }
 
 

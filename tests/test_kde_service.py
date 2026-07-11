@@ -11,7 +11,7 @@ import os
 import sys
 import time
 import urllib.error
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
