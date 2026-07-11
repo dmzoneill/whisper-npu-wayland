@@ -22,6 +22,7 @@ KCM.SimpleKCM {
     property alias cfg_autoPunctuate: autoPunctuateSwitch.checked
     property alias cfg_audioFeedbackEnabled: audioFeedbackSwitch.checked
     property alias cfg_dictationFormattingEnabled: formattingSwitch.checked
+    property alias cfg_muteOtherStreams: muteStreamsSwitch.checked
 
     Kirigami.FormLayout {
         // Server Connection
@@ -143,6 +144,11 @@ KCM.SimpleKCM {
         QQC2.Switch {
             id: formattingSwitch
             Kirigami.FormData.label: "Dictation Formatting:"
+        }
+
+        QQC2.Switch {
+            id: muteStreamsSwitch
+            Kirigami.FormData.label: "Mute Other Streams:"
         }
     }
 }

@@ -101,6 +101,11 @@
       <default>true</default>
       <label>Auto-format numbers, abbreviations, emails, URLs</label>
     </entry>
+
+    <entry name="muteOtherStreams" type="Bool">
+      <default>false</default>
+      <label>Mute other recording streams while push-to-talk is recording</label>
+    </entry>
   </group>
 
 </kcfg>

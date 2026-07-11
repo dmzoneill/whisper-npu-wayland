@@ -39,6 +39,94 @@ HOLD_THRESHOLD = 1.5
 CORRECTION_WINDOW = 3.0
 MODEL_SIZE_ORDER = ["tiny", "base", "small", "medium", "large"]
 
+CONFIG_PATH = os.path.expanduser("~/.config/whisper-npu/settings.json")
+
+CONFIG_KEY_MAP = {
+    "hotkey":                       ("key", str, "KEY_RIGHTCTRL"),
+    "backend":                      ("backend", str, "openvino"),
+    "recall-key":                   ("recall_key", str, "KEY_PAUSE"),
+    "language":                     ("language", str, ""),
+    "vad-threshold":                ("vad_threshold", int, -40),
+    "stream-interval":              ("stream_interval", float, 3.0),
+    "auto-punctuate":               ("auto_punctuate", bool, False),
+    "translate-to":                 ("translate_to", str, ""),
+    "audio-feedback-enabled":       ("sound", bool, True),
+    "dictation-formatting-enabled": ("formatting", bool, True),
+    "mute-other-streams":           ("mute_streams", bool, False),
+    "voice-commands-enabled":       ("voice_commands", bool, True),
+    "notifications-enabled":        ("notifications", bool, True),
+}
+
+
+def load_config(path=CONFIG_PATH):
+    """Load settings from JSON config file. Returns empty dict on failure."""
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def build_settings(args):
+    """Build initial settings dict from CLI args and env vars."""
+    return {
+        "key": args.key,
+        "backend": args.backend,
+        "recall_key": args.recall_key,
+        "language": args.language or os.environ.get("WHISPER_LANGUAGE", "") or "",
+        "vad_threshold": args.vad_threshold,
+        "stream_interval": args.stream_interval,
+        "type_delay": args.type_delay,
+        "auto_punctuate": args.auto_punctuate or os.environ.get("WHISPER_AUTO_PUNCTUATE", "") == "1",
+        "translate_to": args.translate_to or os.environ.get("WHISPER_TRANSLATE_TO", "") or "",
+        "sound": not (args.no_sound or os.environ.get("WHISPER_NO_SOUND", "") == "1"),
+        "formatting": not (args.no_formatting or os.environ.get("WHISPER_NO_FORMATTING", "") == "1"),
+        "mute_streams": args.mute_other_streams or os.environ.get("WHISPER_MUTE_STREAMS", "") == "1",
+        "voice_commands": not args.no_commands,
+        "notifications": not args.no_notify,
+    }
+
+
+def apply_config(settings, config):
+    """Apply config file values to settings dict. Returns True if anything changed."""
+    changed = False
+    for json_key, (internal_key, coerce, _default) in CONFIG_KEY_MAP.items():
+        if json_key in config:
+            try:
+                new_val = coerce(config[json_key])
+            except (ValueError, TypeError):
+                continue
+            if settings.get(internal_key) != new_val:
+                log.info("Setting %s: %s -> %s", internal_key, settings.get(internal_key), new_val)
+                settings[internal_key] = new_val
+                changed = True
+    return changed
+
+
+async def watch_config(settings, on_change, path=CONFIG_PATH, interval=2.0):
+    """Poll config file for changes and apply them to settings dict."""
+    last_mtime = 0.0
+    try:
+        last_mtime = os.path.getmtime(path)
+    except OSError:
+        pass
+
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if mtime <= last_mtime:
+            continue
+        last_mtime = mtime
+        config = load_config(path)
+        if not config:
+            continue
+        if apply_config(settings, config):
+            on_change(settings)
+
+
 VOICE_COMMANDS = {
     "select all":       [("key", "29:1 30:1 30:0 29:0")],
     "undo that":        [("key", "29:1 44:1 44:0 29:0")],
@@ -72,6 +160,89 @@ DEFAULT_APP_CONTEXTS = {
     "com.raggesilver.BlackBox.desktop": {"tones": []},
     "code.desktop": {"tones": []},
 }
+
+
+def _list_source_outputs():
+    """Return parsed JSON list of PulseAudio/PipeWire source-outputs."""
+    try:
+        result = subprocess.run(
+            ["pactl", "--format=json", "list", "source-outputs"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            log.warning("pactl list source-outputs failed: %s", result.stderr.strip())
+            return []
+        return json.loads(result.stdout)
+    except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError) as e:
+        log.warning("Cannot list source-outputs: %s", e)
+        return []
+
+
+def _get_volume_percent(out):
+    """Extract volume percentage from a source-output's volume dict."""
+    vol = out.get("volume", {})
+    for ch in vol.values():
+        if isinstance(ch, dict):
+            return ch.get("value_percent", "100%")
+    return "100%"
+
+
+def mute_other_streams(own_pid):
+    """Mute all recording streams except the one belonging to own_pid.
+    Uses both mute flag and volume=0 for reliable PipeWire/pavucontrol visibility.
+    Returns a list of (index, was_muted, original_volume) for later restoration."""
+    outputs = _list_source_outputs()
+    muted = []
+    own_pid_str = str(own_pid)
+    for out in outputs:
+        props = out.get("properties", {})
+        pid = props.get("application.process.id", "")
+        if pid == own_pid_str:
+            continue
+        if props.get("media.name") == "Peak detect":
+            continue
+        idx = out.get("index")
+        if idx is None:
+            continue
+        was_muted = out.get("mute", False)
+        orig_vol = _get_volume_percent(out)
+        app = props.get("application.name", f"PID {pid}")
+        try:
+            subprocess.run(
+                ["pactl", "set-source-output-mute", str(idx), "1"],
+                check=True, timeout=2,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            subprocess.run(
+                ["pactl", "set-source-output-volume", str(idx), "0%"],
+                check=True, timeout=2,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            muted.append((idx, was_muted, orig_vol))
+            log.info("Muted recording stream: %s (index %d)", app, idx)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            log.warning("Failed to mute recording stream %d (%s): %s", idx, app, e)
+    return muted
+
+
+def unmute_streams(muted_list):
+    """Restore recording streams that were muted by mute_other_streams()."""
+    for idx, was_muted, orig_vol in muted_list:
+        try:
+            subprocess.run(
+                ["pactl", "set-source-output-volume", str(idx), orig_vol],
+                check=True, timeout=2,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            if not was_muted:
+                subprocess.run(
+                    ["pactl", "set-source-output-mute", str(idx), "0"],
+                    check=True, timeout=2,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            log.info("Restored recording stream (index %d)", idx)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            log.warning("Failed to restore recording stream %d: %s", idx, e)
 
 
 def find_keyboard():
@@ -577,13 +748,14 @@ async def main():
                         help="Disable audio feedback sounds")
     parser.add_argument("--no-formatting", action="store_true", default=False,
                         help="Disable dictation formatting (numbers, abbreviations)")
+    parser.add_argument("--mute-other-streams", action="store_true", default=False,
+                        help="Mute other recording streams while recording (e.g. video call mic)")
     args = parser.parse_args()
 
-    language = args.language or os.environ.get("WHISPER_LANGUAGE", "") or None
-    do_auto_punctuate = args.auto_punctuate or os.environ.get("WHISPER_AUTO_PUNCTUATE", "") == "1"
-    translate_to = args.translate_to or os.environ.get("WHISPER_TRANSLATE_TO", "") or None
-    do_sound = not (args.no_sound or os.environ.get("WHISPER_NO_SOUND", "") == "1")
-    do_formatting = not (args.no_formatting or os.environ.get("WHISPER_NO_FORMATTING", "") == "1")
+    settings = build_settings(args)
+    config = load_config()
+    if config:
+        apply_config(settings, config)
 
     try:
         import aiohttp  # noqa: F401
@@ -594,9 +766,19 @@ async def main():
     import evdev
     from evdev import ecodes
 
-    target_key = getattr(ecodes, args.key, None)
-    if target_key is None:
-        log.error("Unknown key: %s", args.key)
+    derived = {}
+
+    def update_derived(s):
+        new_key = getattr(ecodes, s["key"], None)
+        if new_key:
+            derived["target_key"] = new_key
+        derived["backend_port"] = args.port if s["backend"] == "openvino" else 5001
+        derived["recall_key"] = getattr(ecodes, s["recall_key"], None)
+
+    update_derived(settings)
+
+    if derived.get("target_key") is None:
+        log.error("Unknown key: %s", settings["key"])
         sys.exit(1)
 
     kbd = find_keyboard()
@@ -604,15 +786,12 @@ async def main():
         log.error("No keyboard found in /dev/input/ — run with sudo or add user to 'input' group")
         sys.exit(1)
 
-    backend_port = args.port if args.backend == "openvino" else 5001
     log.info("Listening on %s (key: %s, backend: %s, port: %d)",
-             kbd.name, args.key, args.backend, backend_port)
-    log.info("Hold %s to record, release to transcribe and type", args.key)
+             kbd.name, settings["key"], settings["backend"], derived["backend_port"])
+    log.info("Hold %s to record, release to transcribe and type", settings["key"])
 
     history = TranscriptionHistory()
     app_contexts = load_app_contexts()
-
-    recall_key = getattr(ecodes, args.recall_key, None)
 
     recording_proc = None
     streaming_task = None
@@ -624,6 +803,7 @@ async def main():
     last_typed_text = ""
     last_transcription_end = 0.0
     last_used_dbus = False
+    muted_streams = []
 
     def backspace_n(n):
         """Send n backspace keys."""
@@ -652,7 +832,7 @@ async def main():
         await asyncio.sleep(interval)
         while audio_buf.proc.poll() is None:
             raw_audio = audio_buf.snapshot()
-            raw_audio = trim_silence(raw_audio, threshold_db=args.vad_threshold)
+            raw_audio = trim_silence(raw_audio, threshold_db=settings["vad_threshold"])
             if len(raw_audio) < SAMPLE_RATE * SAMPLE_WIDTH:
                 await asyncio.sleep(0.5)
                 continue
@@ -668,7 +848,7 @@ async def main():
                 await asyncio.sleep(0.5)
                 continue
             log.info("Streaming chunk: %.1fs of audio", duration)
-            text = await transcribe_chunk(wav_bytes, port, language=language)
+            text = await transcribe_chunk(wav_bytes, port, language=settings["language"] or None)
             if text and text != streamed_text:
                 common = 0
                 for a, b in zip(streamed_text, text):
@@ -692,6 +872,7 @@ async def main():
         """Stop recording, do final transcription, and type result."""
         nonlocal recording_proc, streaming_task, typed_char_count, streamed_text, mode
         nonlocal last_wav_bytes, last_typed_text, last_transcription_end, last_used_dbus
+        nonlocal muted_streams
 
         if streaming_task:
             streaming_task.cancel()
@@ -701,8 +882,12 @@ async def main():
                 pass
             streaming_task = None
 
-        wav_bytes = stop_recording(recording_proc, vad_threshold=args.vad_threshold)
+        wav_bytes = stop_recording(recording_proc, vad_threshold=settings["vad_threshold"])
         recording_proc = None
+
+        if muted_streams:
+            unmute_streams(muted_streams)
+            muted_streams = []
 
         if wav_bytes is None:
             log.info("No speech detected (silence only)")
@@ -719,8 +904,8 @@ async def main():
         log.info("Recorded %.1fs of audio", duration)
 
         # Toggle mode with whisper-cpp: live diff correction (no D-Bus handoff)
-        if args.backend == "whisper-cpp" and mode == "toggle":
-            text = await transcribe_chunk(wav_bytes, port, language=language)
+        if settings["backend"] == "whisper-cpp" and mode == "toggle":
+            text = await transcribe_chunk(wav_bytes, port, language=settings["language"] or None)
             if text:
                 common = 0
                 for a, b in zip(streamed_text, text):
@@ -742,10 +927,10 @@ async def main():
 
         # Hold mode: transcribe, try D-Bus handoff, fallback to direct typing
         log.info("Transcribing...")
-        if args.backend == "whisper-cpp":
-            text = await transcribe_chunk(wav_bytes, port, language=language)
+        if settings["backend"] == "whisper-cpp":
+            text = await transcribe_chunk(wav_bytes, port, language=settings["language"] or None)
         else:
-            text = await transcribe_batch(wav_bytes, port, language=language)
+            text = await transcribe_batch(wav_bytes, port, language=settings["language"] or None)
 
         if not text:
             log.info("No transcription returned")
@@ -754,26 +939,26 @@ async def main():
 
         text = text.strip()
 
-        if do_sound:
+        if settings["sound"]:
             play_sound("message")
 
         # Post-processing pipeline
-        if do_formatting:
+        if settings["formatting"]:
             text = format_dictation(text)
-        if do_auto_punctuate:
+        if settings["auto_punctuate"]:
             text = await auto_punctuate(text, port)
-        if translate_to:
+        if settings["translate_to"]:
             original = text
-            text = await translate_text(text, translate_to, port)
+            text = await translate_text(text, settings["translate_to"], port)
             log.info("Translated: %s -> %s", original[:40], text[:40])
 
         # Save to history
         history.add(text)
 
         # Check for voice commands
-        if not args.no_commands and execute_voice_command(text):
+        if settings["voice_commands"] and execute_voice_command(text):
             log.info("Voice command: %s", text[:80])
-            if not args.no_notify:
+            if settings["notifications"]:
                 notify("Voice Command", text[:80])
             mode = None
             return
@@ -795,9 +980,9 @@ async def main():
             log.info("Typing: %s", text[:80])
             type_text(text, delay_ms=delay_ms)
 
-        if not args.no_notify:
+        if settings["notifications"]:
             notify("Whisper", text[:200])
-        if do_sound:
+        if settings["sound"]:
             play_sound("complete")
 
         # Save state for correction mode
@@ -823,7 +1008,7 @@ async def main():
             mode = None
             return
 
-        url = f"http://127.0.0.1:{backend_port}/models"
+        url = f"http://127.0.0.1:{derived['backend_port']}/models"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url) as resp:
@@ -840,7 +1025,7 @@ async def main():
         current_default = None
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"http://127.0.0.1:{backend_port}/model/default") as resp:
+                async with session.get(f"http://127.0.0.1:{derived['backend_port']}/model/default") as resp:
                     if resp.status == 200:
                         current_default = (await resp.json()).get("model", "")
         except Exception:
@@ -868,9 +1053,9 @@ async def main():
             return
 
         log.info("Correction: re-transcribing with %s", larger)
-        url = f"http://127.0.0.1:{backend_port}/transcribe/{larger}"
-        if language:
-            url += f"?language={language}"
+        url = f"http://127.0.0.1:{derived['backend_port']}/transcribe/{larger}"
+        if settings["language"]:
+            url += f"?language={settings['language']}"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, data=last_wav_bytes) as resp:
@@ -885,17 +1070,19 @@ async def main():
 
         if new_text and new_text != last_typed_text:
             backspace_n(len(last_typed_text))
-            type_text(new_text, delay_ms=args.type_delay)
+            type_text(new_text, delay_ms=settings["type_delay"])
             log.info("Corrected: %s -> %s", last_typed_text[:40], new_text[:40])
-            if not args.no_notify:
+            if settings["notifications"]:
                 notify("Correction", f"{new_text[:200]}")
             last_typed_text = new_text
         else:
             log.info("Same result with larger model")
-            if not args.no_notify:
+            if settings["notifications"]:
                 notify("Whisper", "Same result with larger model")
 
         mode = None
+
+    asyncio.create_task(watch_config(settings, update_derived))
 
     async for event in kbd.async_read_loop():
         if event.type != ecodes.EV_KEY:
@@ -903,7 +1090,7 @@ async def main():
         key_event = evdev.categorize(event)
 
         # Recall key — show history picker
-        if recall_key and key_event.scancode == recall_key and key_event.keystate == key_event.key_down:
+        if derived["recall_key"] and key_event.scancode == derived["recall_key"] and key_event.keystate == key_event.key_down:
             if not try_dbus_history_picker(history):
                 items = history.recent(1)
                 if items:
@@ -915,7 +1102,7 @@ async def main():
                         pass
             continue
 
-        if key_event.scancode != target_key:
+        if key_event.scancode != derived["target_key"]:
             continue
 
         if key_event.keystate == key_event.key_down:
@@ -926,13 +1113,15 @@ async def main():
                 typed_char_count = 0
                 streamed_text = ""
                 log.info("Recording...")
-                if do_sound:
+                if settings["sound"]:
                     play_sound("message-new-instant")
                 recording_proc = record_audio()
+                if settings["mute_streams"]:
+                    muted_streams = mute_other_streams(recording_proc.proc.pid)
             elif mode == "toggle":
                 # Second tap in toggle mode — stop and finalize
                 log.info("Toggle stop")
-                await finalize_recording(backend_port, args.type_delay)
+                await finalize_recording(derived["backend_port"], settings["type_delay"])
 
         elif key_event.keystate == key_event.key_up:
             if recording_proc is None:
@@ -948,23 +1137,26 @@ async def main():
                 mode = "correction"
                 log.info("Correction mode — re-transcribing with larger model")
                 if recording_proc:
-                    stop_recording(recording_proc, vad_threshold=args.vad_threshold)
+                    stop_recording(recording_proc, vad_threshold=settings["vad_threshold"])
                     recording_proc = None
+                if muted_streams:
+                    unmute_streams(muted_streams)
+                    muted_streams = []
                 await correct_last_transcription()
             elif hold_duration < HOLD_THRESHOLD:
                 # Quick tap — enter toggle mode with live streaming
                 mode = "toggle"
                 log.info("Toggle mode — tap again to stop (held %.1fs)", hold_duration)
-                if args.backend == "whisper-cpp":
+                if settings["backend"] == "whisper-cpp":
                     streaming_task = asyncio.create_task(
-                        streaming_loop_live(recording_proc, backend_port,
-                                           args.stream_interval, args.type_delay)
+                        streaming_loop_live(recording_proc, derived["backend_port"],
+                                           settings["stream_interval"], settings["type_delay"])
                     )
             else:
                 # Long hold — finalize immediately
                 mode = "hold"
                 log.info("Hold mode — transcribing (held %.1fs)", hold_duration)
-                await finalize_recording(backend_port, args.type_delay)
+                await finalize_recording(derived["backend_port"], settings["type_delay"])
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ import {
   downloadModel,
   downloadLlmModel,
   writeServiceOverride,
-  writePttServiceOverride,
+  writeSettingsJson,
   restartService,
   typeText,
   backspaceN,
@@ -427,7 +427,18 @@ const WhisperIndicator = GObject.registerClass(
             settings.get_int('server-port')
           )
         }
+        try {
+          writeSettingsJson(this._gatherSettings())
+        } catch (e) {
+          // Ignore config file write errors
+        }
       })
+
+      try {
+        writeSettingsJson(this._gatherSettings())
+      } catch (e) {
+        // Ignore initial config write errors
+      }
 
       // Overlays
       this._overlay = new LanguageBuddyOverlay()
@@ -714,6 +725,15 @@ const WhisperIndicator = GObject.registerClass(
       })
       this.menu.addMenuItem(this._formattingToggle)
 
+      this._muteStreamsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Mute Other Streams'),
+        this._settings.get_boolean('mute-other-streams')
+      )
+      this._muteStreamsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('mute-other-streams', state)
+      })
+      this.menu.addMenuItem(this._muteStreamsToggle)
+
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       // Translate To submenu
@@ -796,9 +816,9 @@ const WhisperIndicator = GObject.registerClass(
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      this._applyItem = new PopupMenu.PopupMenuItem(_('Apply & Restart Services'))
-      this._applyItem.connect('activate', () => this._applyAndRestart())
-      this.menu.addMenuItem(this._applyItem)
+      this._restartServerItem = new PopupMenu.PopupMenuItem(_('Restart Server'))
+      this._restartServerItem.connect('activate', () => this._restartServer())
+      this.menu.addMenuItem(this._restartServerItem)
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
@@ -1207,66 +1227,61 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- Apply settings -----------------------------------------------------
 
-    async _applyAndRestart () {
-      this._applyItem.label.set_text(_('Restarting services...'))
-      this._applyItem.reactive = false
+    _gatherSettings () {
+      return {
+        'server-host': this._settings.get_string('server-host'),
+        'server-port': this._settings.get_int('server-port'),
+        'device': this._settings.get_string('device'),
+        'backend': this._settings.get_string('backend'),
+        'hotkey': this._settings.get_string('hotkey'),
+        'language': this._settings.get_string('language'),
+        'recall-key': this._settings.get_string('recall-key'),
+        'hf-org': this._settings.get_string('hf-org'),
+        'language-buddy-enabled': this._settings.get_boolean('language-buddy-enabled'),
+        'language-buddy-bypass': this._settings.get_boolean('language-buddy-bypass'),
+        'language-buddy-timeout': this._settings.get_int('language-buddy-timeout'),
+        'voice-commands-enabled': this._settings.get_boolean('voice-commands-enabled'),
+        'notifications-enabled': this._settings.get_boolean('notifications-enabled'),
+        'auto-punctuate': this._settings.get_boolean('auto-punctuate'),
+        'audio-feedback-enabled': this._settings.get_boolean('audio-feedback-enabled'),
+        'dictation-formatting-enabled': this._settings.get_boolean('dictation-formatting-enabled'),
+        'vad-threshold': this._settings.get_int('vad-threshold'),
+        'stream-interval': this._settings.get_double('stream-interval'),
+        'translate-to': this._settings.get_string('translate-to'),
+        'mute-other-streams': this._settings.get_boolean('mute-other-streams')
+      }
+    }
+
+    async _restartServer () {
+      this._restartServerItem.label.set_text(_('Restarting server...'))
+      this._restartServerItem.reactive = false
 
       const device = this._settings.get_string('device')
-      const backend = this._settings.get_string('backend')
-      const hotkey = this._settings.get_string('hotkey')
-      const lang = this._settings.get_string('language')
-      const recallKey = this._settings.get_string('recall-key')
-      const voiceCommands = this._settings.get_boolean('voice-commands-enabled')
-      const notifications = this._settings.get_boolean('notifications-enabled')
-      const vadThreshold = this._settings.get_int('vad-threshold')
-      const streamInterval = this._settings.get_double('stream-interval')
-      const autoPunctuate = this._settings.get_boolean('auto-punctuate')
-      const translateTo = this._settings.get_string('translate-to')
-      const audioFeedback = this._settings.get_boolean('audio-feedback-enabled')
-      const formatting = this._settings.get_boolean('dictation-formatting-enabled')
-
-      logDebug(`Applying settings: device=${device} backend=${backend} hotkey=${hotkey} lang=${lang}`)
 
       try {
         await writeServiceOverride('whisper-server.service', {
           WHISPER_DEVICE: device
         })
-
-        const pttEnv = { XDG_SESSION_TYPE: 'wayland' }
-        if (lang) pttEnv.WHISPER_LANGUAGE = lang
-        if (autoPunctuate) pttEnv.WHISPER_AUTO_PUNCTUATE = '1'
-        if (translateTo) pttEnv.WHISPER_TRANSLATE_TO = translateTo
-        if (!audioFeedback) pttEnv.WHISPER_NO_SOUND = '1'
-        if (!formatting) pttEnv.WHISPER_NO_FORMATTING = '1'
-
-        const pttArgs = ['--key', hotkey, '--backend', backend, '--recall-key', recallKey,
-          '--vad-threshold', String(vadThreshold), '--stream-interval', String(streamInterval)]
-        if (!voiceCommands) pttArgs.push('--no-commands')
-        if (!notifications) pttArgs.push('--no-notify')
-
-        await writePttServiceOverride(pttEnv, pttArgs)
-
         await restartService('whisper-server.service')
-        await restartService('push-to-talk.service')
 
-        this._applyItem.label.set_text(_('Services restarted'))
-        Main.notify(_('Whisper NPU'), _('Services restarted'))
+        this._restartServerItem.label.set_text(_('Server restarted'))
+        Main.notify(_('Whisper NPU'), _('Server restarted'))
       } catch (e) {
-        logDebug(`Failed to apply settings: ${e.message}`)
-        this._applyItem.label.set_text(_('Restart failed'))
+        logDebug(`Failed to restart server: ${e.message}`)
+        this._restartServerItem.label.set_text(_('Restart failed'))
         Main.notify(_('Whisper NPU'), _(`Failed to restart: ${e.message}`))
       }
 
-      this._applyItem.reactive = true
+      this._restartServerItem.reactive = true
       GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 3, () => {
-        this._applyItem.label.set_text(_('Apply & Restart Services'))
+        this._restartServerItem.label.set_text(_('Restart Server'))
         return GLib.SOURCE_REMOVE
       })
     }
 
     // -- Cleanup ------------------------------------------------------------
 
-    destroy () {
+    cleanup () {
       if (this._dbusImpl) {
         this._dbusImpl.unexport()
         this._dbusImpl = null
@@ -1294,6 +1309,10 @@ const WhisperIndicator = GObject.registerClass(
         this._hfClient = null
       }
       this._settings = null
+    }
+
+    destroy () {
+      this.cleanup()
       super.destroy()
     }
   }
@@ -1312,6 +1331,7 @@ export default class WhisperNpuExtension extends Extension {
 
   disable () {
     if (this._indicator) {
+      this._indicator.cleanup()
       this._indicator.destroy()
       this._indicator = null
       this._settings = null

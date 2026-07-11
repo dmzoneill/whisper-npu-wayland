@@ -116,5 +116,11 @@
       <description>Auto-format numbers, abbreviations, emails, and URLs in transcriptions</description>
     </key>
 
+    <key name="mute-other-streams" type="b">
+      <default>false</default>
+      <summary>Mute other recording streams</summary>
+      <description>Mute other recording streams (e.g. video call microphone) while push-to-talk is recording, then restore them when recording stops. Mutes the streams, not the input device itself.</description>
+    </key>
+
   </schema>
 </schemalist>

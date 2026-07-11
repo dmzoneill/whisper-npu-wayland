@@ -351,6 +351,22 @@ export async function writePttServiceOverride (envVars, pttArgs) {
   await execCommand(['systemctl', '--user', 'daemon-reload'])
 }
 
+export function writeSettingsJson (settings) {
+  const configDir = GLib.build_filenamev([GLib.get_home_dir(), '.config', 'whisper-npu'])
+  const configPath = GLib.build_filenamev([configDir, 'settings.json'])
+
+  const dir = Gio.file_new_for_path(configDir)
+  try {
+    dir.make_directory_with_parents(null)
+  } catch (e) {
+    if (!e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.EXISTS)) { throw e }
+  }
+
+  const content = JSON.stringify(settings, null, 2) + '\n'
+  const file = Gio.file_new_for_path(configPath)
+  file.replace_contents(content, null, false, Gio.FileCreateFlags.REPLACE_DESTINATION, null)
+}
+
 export async function writeServiceOverride (serviceName, envVars) {
   const overrideDir = GLib.build_filenamev([
     GLib.get_home_dir(), '.config', 'systemd', 'user',

@@ -464,6 +464,15 @@ PlasmaExtras.Representation {
                     }
                 }
 
+                SwitchRow {
+                    label: "Mute Other Streams"
+                    checked: Plasmoid.configuration.muteOtherStreams
+                    onToggled: function(state) {
+                        Plasmoid.configuration.muteOtherStreams = state
+                        root.saveSettings()
+                    }
+                }
+
                 Kirigami.Separator { Layout.fillWidth: true }
 
                 // ----- Translate, VAD, Stream Interval -----
@@ -558,10 +567,10 @@ PlasmaExtras.Representation {
 
                 Kirigami.Separator { Layout.fillWidth: true }
 
-                // ----- Apply & Restart -----
+                // ----- Restart Server -----
                 PlasmaComponents.Button {
                     Layout.fillWidth: true
-                    text: "Apply & Restart Services"
+                    text: "Restart Server"
                     icon.name: "system-reboot"
 
                     property bool restarting: false
@@ -569,10 +578,10 @@ PlasmaExtras.Representation {
                     onClicked: {
                         if (restarting) return
                         restarting = true
-                        text = "Restarting services..."
-                        applyAndRestart(function() {
+                        text = "Restarting server..."
+                        restartServer(function() {
                             restarting = false
-                            text = "Apply & Restart Services"
+                            text = "Restart Server"
                         })
                     }
                 }
@@ -596,55 +605,17 @@ PlasmaExtras.Representation {
             })
     }
 
-    function applyAndRestart(callback) {
+    function restartServer(callback) {
         var device = Plasmoid.configuration.device || "NPU"
-        var backend = Plasmoid.configuration.backend || "openvino"
-        var hotkey = Plasmoid.configuration.hotkey || "KEY_RIGHTCTRL"
-        var lang = Plasmoid.configuration.language || ""
-        var recallKey = Plasmoid.configuration.recallKey || "KEY_PAUSE"
-        var voiceCommands = Plasmoid.configuration.voiceCommandsEnabled
-        var notifications = Plasmoid.configuration.notificationsEnabled
-        var vadThreshold = Plasmoid.configuration.vadThreshold || -40
-        var streamInterval = Plasmoid.configuration.streamInterval || 3.0
-        var autoPunctuate = Plasmoid.configuration.autoPunctuate
-        var translateTo = Plasmoid.configuration.translateTo || ""
-        var audioFeedback = Plasmoid.configuration.audioFeedbackEnabled
-        var formatting = Plasmoid.configuration.dictationFormattingEnabled
-
         var home = root.homeDir
 
-        // Write whisper-server override
         var serverOverrideDir = home + "/.config/systemd/user/whisper-server.service.d"
         var serverOverride = "[Service]\nEnvironment=\"WHISPER_DEVICE=" + device + "\"\n"
 
-        // Write push-to-talk override
-        var pttOverrideDir = home + "/.config/systemd/user/push-to-talk.service.d"
-        var pttOverride = "[Service]\n"
-        pttOverride += "Environment=\"XDG_SESSION_TYPE=wayland\"\n"
-        if (lang) pttOverride += "Environment=\"WHISPER_LANGUAGE=" + lang + "\"\n"
-        if (autoPunctuate) pttOverride += "Environment=\"WHISPER_AUTO_PUNCTUATE=1\"\n"
-        if (translateTo) pttOverride += "Environment=\"WHISPER_TRANSLATE_TO=" + translateTo + "\"\n"
-        if (!audioFeedback) pttOverride += "Environment=\"WHISPER_NO_SOUND=1\"\n"
-        if (!formatting) pttOverride += "Environment=\"WHISPER_NO_FORMATTING=1\"\n"
-
-        var srcDir = home + "/src/whisper-npu-server"
-        var pttArgs = "--key " + hotkey + " --backend " + backend
-        pttArgs += " --recall-key " + recallKey
-        pttArgs += " --vad-threshold " + vadThreshold
-        pttArgs += " --stream-interval " + streamInterval
-        if (!voiceCommands) pttArgs += " --no-commands"
-        if (!notifications) pttArgs += " --no-notify"
-
-        pttOverride += "ExecStart=\n"
-        pttOverride += "ExecStart=/usr/bin/python3 " + srcDir + "/push-to-talk.py " + pttArgs + "\n"
-
         var cmd = "mkdir -p " + serverOverrideDir
         cmd += " && cat > " + serverOverrideDir + "/override.conf << 'SVREOF'\n" + serverOverride + "SVREOF"
-        cmd += " && mkdir -p " + pttOverrideDir
-        cmd += " && cat > " + pttOverrideDir + "/override.conf << 'PTTEOF'\n" + pttOverride + "PTTEOF"
         cmd += " && systemctl --user daemon-reload"
         cmd += " && systemctl --user restart whisper-server.service"
-        cmd += " && systemctl --user restart push-to-talk.service"
 
         root.executable.execCallback(cmd, function(stdout, stderr, exitCode) {
             if (exitCode === 0) {

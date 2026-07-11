@@ -162,7 +162,8 @@ PlasmoidItem {
             "dictation-formatting-enabled": Plasmoid.configuration.dictationFormattingEnabled,
             "vad-threshold": Plasmoid.configuration.vadThreshold,
             "stream-interval": Plasmoid.configuration.streamInterval,
-            "translate-to": Plasmoid.configuration.translateTo
+            "translate-to": Plasmoid.configuration.translateTo,
+            "mute-other-streams": Plasmoid.configuration.muteOtherStreams
         }
 
         var configDir = homeDir + "/.config/whisper-npu"
