@@ -245,8 +245,8 @@ def unmute_streams(muted_list):
             log.warning("Failed to restore recording stream %d: %s", idx, e)
 
 
-def find_keyboards():
-    """Find all keyboard devices in /dev/input/.
+def find_keyboards(exclude=()):
+    """Find all keyboard devices in /dev/input/, skipping paths in exclude.
 
     Multiple devices advertise a full key range (e.g. gaming mice expose a
     phantom keyboard interface), so listen on every real keyboard rather
@@ -255,16 +255,27 @@ def find_keyboards():
     import evdev
     kbds = []
     for path in evdev.list_devices():
-        dev = evdev.InputDevice(path)
+        if path in exclude:
+            continue
+        try:
+            dev = evdev.InputDevice(path)
+        except OSError:
+            # Device vanished or udev hasn't set permissions yet (hotplug race)
+            continue
         if "virtual" in dev.name.lower():
+            dev.close()
             continue
         caps = dev.capabilities(verbose=True)
+        matched = False
         for (etype, _), codes in caps.items():
             if etype == "EV_KEY":
                 key_names = [c[0] if isinstance(c[0], str) else c[0][0] for c in codes]
                 if "KEY_A" in key_names and "KEY_ENTER" in key_names:
                     kbds.append(dev)
+                    matched = True
                     break
+        if not matched:
+            dev.close()
     return kbds
 
 
@@ -1099,9 +1110,30 @@ async def main():
                 await event_queue.put(ev)
         except OSError:
             log.warning("Keyboard %s disconnected", dev.name)
+        finally:
+            try:
+                dev.close()
+            except OSError:
+                pass
 
-    for dev in kbds:
-        asyncio.create_task(pump_events(dev))
+    async def keyboard_watcher(initial_kbds, interval=2.0):
+        """Keep a pump task per connected keyboard, re-scanning for hotplug.
+
+        KVM switches disconnect the keyboard and re-enumerate it under a new
+        /dev/input/eventX node, so a one-shot scan at startup goes deaf after
+        the first switch-away.
+        """
+        pumps = {dev.path: asyncio.create_task(pump_events(dev)) for dev in initial_kbds}
+        while True:
+            await asyncio.sleep(interval)
+            for path, task in list(pumps.items()):
+                if task.done():
+                    del pumps[path]
+            for dev in find_keyboards(exclude=pumps.keys()):
+                log.info("Keyboard %s connected (%s)", dev.name, dev.path)
+                pumps[dev.path] = asyncio.create_task(pump_events(dev))
+
+    asyncio.create_task(keyboard_watcher(kbds))
 
     while True:
         event = await event_queue.get()
