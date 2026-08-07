@@ -245,9 +245,15 @@ def unmute_streams(muted_list):
             log.warning("Failed to restore recording stream %d: %s", idx, e)
 
 
-def find_keyboard():
-    """Find the first keyboard device in /dev/input/."""
+def find_keyboards():
+    """Find all keyboard devices in /dev/input/.
+
+    Multiple devices advertise a full key range (e.g. gaming mice expose a
+    phantom keyboard interface), so listen on every real keyboard rather
+    than guessing which one the user will press the hold key on.
+    """
     import evdev
+    kbds = []
     for path in evdev.list_devices():
         dev = evdev.InputDevice(path)
         if "virtual" in dev.name.lower():
@@ -257,8 +263,9 @@ def find_keyboard():
             if etype == "EV_KEY":
                 key_names = [c[0] if isinstance(c[0], str) else c[0][0] for c in codes]
                 if "KEY_A" in key_names and "KEY_ENTER" in key_names:
-                    return dev
-    return None
+                    kbds.append(dev)
+                    break
+    return kbds
 
 
 class AudioBuffer:
@@ -790,13 +797,13 @@ async def main():
         log.error("Unknown key: %s", settings["key"])
         sys.exit(1)
 
-    kbd = find_keyboard()
-    if kbd is None:
+    kbds = find_keyboards()
+    if not kbds:
         log.error("No keyboard found in /dev/input/ — run with sudo or add user to 'input' group")
         sys.exit(1)
 
     log.info("Listening on %s (key: %s, backend: %s, port: %d)",
-             kbd.name, settings["key"], settings["backend"], derived["backend_port"])
+             ", ".join(k.name for k in kbds), settings["key"], settings["backend"], derived["backend_port"])
     log.info("Hold %s to record, release to transcribe and type", settings["key"])
 
     history = TranscriptionHistory()
@@ -1093,7 +1100,20 @@ async def main():
 
     asyncio.create_task(watch_config(settings, update_derived))
 
-    async for event in kbd.async_read_loop():
+    event_queue = asyncio.Queue()
+
+    async def pump_events(dev):
+        try:
+            async for ev in dev.async_read_loop():
+                await event_queue.put(ev)
+        except OSError:
+            log.warning("Keyboard %s disconnected", dev.name)
+
+    for dev in kbds:
+        asyncio.create_task(pump_events(dev))
+
+    while True:
+        event = await event_queue.get()
         if event.type != ecodes.EV_KEY:
             continue
         key_event = evdev.categorize(event)
