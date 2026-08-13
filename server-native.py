@@ -182,22 +182,24 @@ class ModelManager:
             cuda_device = DEVICE.split(":")[0]
             local_path = os.path.join(self.ct2_models_dir, model_name)
             source = local_path if os.path.isdir(local_path) else model_name
-            # Try compute types from best to most compatible — older GPUs may not support float16
-            compute_types = ["float16", "int8_float16", "int8"] if cuda_device == "cuda" else ["int8"]
-            for compute_type in compute_types:
+            # Pick best compute type the GPU actually supports
+            if cuda_device == "cuda":
                 try:
-                    logger.info(f"Loading {model_name} on {DEVICE} (faster-whisper, compute={compute_type})")
-                    self.pipelines[model_name] = _faster_whisper_cls(
-                        source,
-                        device=cuda_device,
-                        device_index=cuda_index,
-                        compute_type=compute_type,
-                    )
-                    break
-                except (ValueError, RuntimeError) as e:
-                    logger.warning(f"compute_type={compute_type} not supported: {e}")
-                    if compute_type == compute_types[-1]:
-                        raise
+                    import ctranslate2 as _ct2
+                    supported = _ct2.get_supported_compute_types("cuda")
+                    preference = ["float16", "int8_float16", "int8", "float32"]
+                    compute_type = next((ct for ct in preference if ct in supported), "float32")
+                except Exception:
+                    compute_type = "float32"
+            else:
+                compute_type = "int8"
+            logger.info(f"Loading {model_name} on {DEVICE} (faster-whisper, compute={compute_type})")
+            self.pipelines[model_name] = _faster_whisper_cls(
+                source,
+                device=cuda_device,
+                device_index=cuda_index,
+                compute_type=compute_type,
+            )
 
         elapsed = time.time() - t0
         logger.info(f"Model loaded in {elapsed:.1f}s")
