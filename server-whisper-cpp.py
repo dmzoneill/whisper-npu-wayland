@@ -63,16 +63,6 @@ class WhisperContextParams(ctypes.Structure):
     ]
 
 
-class WhisperVadParams(ctypes.Structure):
-    _fields_ = [
-        ("threshold", ctypes.c_float),
-        ("min_speech_duration_ms", ctypes.c_int),
-        ("min_silence_duration_ms", ctypes.c_int),
-        ("max_speech_duration_s", ctypes.c_float),
-        ("speech_pad_ms", ctypes.c_int),
-        ("samples_overlap", ctypes.c_float),
-    ]
-
 
 class WhisperFullParams(ctypes.Structure):
     _fields_ = [
@@ -100,7 +90,6 @@ class WhisperFullParams(ctypes.Structure):
         ("tdrz_enable", ctypes.c_bool),
         ("suppress_regex", ctypes.c_char_p),
         ("initial_prompt", ctypes.c_char_p),
-        ("carry_initial_prompt", ctypes.c_bool),
         ("prompt_tokens", ctypes.c_void_p),
         ("prompt_n_tokens", ctypes.c_int),
         ("language", ctypes.c_char_p),
@@ -131,9 +120,6 @@ class WhisperFullParams(ctypes.Structure):
         ("n_grammar_rules", ctypes.c_size_t),
         ("i_start_rule", ctypes.c_size_t),
         ("grammar_penalty", ctypes.c_float),
-        ("vad", ctypes.c_bool),
-        ("vad_model_path", ctypes.c_char_p),
-        ("vad_params", WhisperVadParams),
     ]
 
 
