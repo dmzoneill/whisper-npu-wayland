@@ -118,11 +118,20 @@ install-system: ## Install system packages via dnf (requires sudo)
 	@printf '%s\n' \
 		'[Service]' \
 		'RestartSec=3' \
-		"ExecStartPost=/bin/bash -c 'sleep 0.5 && chmod 666 /tmp/.ydotool_socket'" \
+		"ExecStartPost=/bin/bash -c 'sleep 0.5 && for s in /tmp/.ydotool_socket /run/user/*/.ydotool_socket; do [ -S \"$$s\" ] && chmod 666 \"$$s\"; done'" \
 		| sudo tee /etc/systemd/system/ydotool.service.d/socket-permissions.conf > /dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable ydotool.service
 	sudo systemctl restart ydotool.service
+	@sleep 1
+	@YDOTOOL_SOCKET=$$(ls /tmp/.ydotool_socket /run/user/*/.ydotool_socket 2>/dev/null | head -1); \
+	if [ -n "$$YDOTOOL_SOCKET" ]; then \
+		YDOTOOL_SOCKET=$$YDOTOOL_SOCKET ydotool type -- "" 2>/dev/null \
+			&& echo "  [x] ydotool OK ($$YDOTOOL_SOCKET)" \
+			|| echo "  [!] ydotool socket found at $$YDOTOOL_SOCKET but command failed — check permissions"; \
+	else \
+		echo "  [!] ydotool socket not found — daemon may not have started yet"; \
+	fi
 
 # ----------------------------------------------------------------------------
 # whisper.cpp (libwhisper.so)

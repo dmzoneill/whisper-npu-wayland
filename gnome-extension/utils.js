@@ -6,9 +6,17 @@ Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async')
 
 const LOG_PREFIX = '[whisper-npu]'
 
-// ydotoold creates the socket at /tmp/.ydotool_socket but the ydotool client
-// defaults to /run/user/<uid>/.ydotool_socket — they differ. Set explicitly.
-const YDOTOOL_SOCKET = '/tmp/.ydotool_socket'
+// Detect ydotool socket at call time — daemon version and distro affect the path.
+// Priority: YDOTOOL_SOCKET env var → /run/user/<uid>/.ydotool_socket → /tmp/.ydotool_socket
+function getYdotoolSocket () {
+  const envSocket = GLib.getenv('YDOTOOL_SOCKET')
+  if (envSocket) return envSocket
+
+  const runtimeSocket = GLib.build_filenamev([GLib.get_user_runtime_dir(), '.ydotool_socket'])
+  if (GLib.file_test(runtimeSocket, GLib.FileTest.EXISTS)) return runtimeSocket
+
+  return '/tmp/.ydotool_socket'
+}
 
 export function logDebug (message) {
   console.log(`${LOG_PREFIX} ${message}`) // eslint-disable-line no-undef
@@ -305,13 +313,14 @@ export async function downloadLlmModel (org, modelName, cancellable = null) {
 }
 
 export async function typeText (text, delayMs = 4) {
-  return execCommand(['env', `YDOTOOL_SOCKET=${YDOTOOL_SOCKET}`, 'ydotool', 'type', '-d', String(delayMs), '--', text])
+  return execCommand(['env', `YDOTOOL_SOCKET=${getYdotoolSocket()}`, 'ydotool', 'type', '-d', String(delayMs), '--', text])
 }
 
 export async function backspaceN (n) {
+  const socket = getYdotoolSocket()
   const promises = []
   for (let i = 0; i < n; i++) {
-    promises.push(execCommand(['env', `YDOTOOL_SOCKET=${YDOTOOL_SOCKET}`, 'ydotool', 'key', '14:1', '14:0']))
+    promises.push(execCommand(['env', `YDOTOOL_SOCKET=${socket}`, 'ydotool', 'key', '14:1', '14:0']))
   }
   return Promise.all(promises)
 }
