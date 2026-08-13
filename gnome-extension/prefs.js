@@ -85,14 +85,17 @@ export default class WhisperNpuPreferences extends ExtensionPreferences {
     backendRow.activatable = false
     group.add(backendRow)
 
-    const hotkeyEntry = new Gtk.Entry({ hexpand: true })
-    hotkeyEntry.set_text(settings.get_string('hotkey'))
-    hotkeyEntry.connect('changed', () => {
-      settings.set_string('hotkey', hotkeyEntry.get_text())
+    const HOTKEYS = ['KEY_RIGHTCTRL', 'KEY_RIGHTALT', 'KEY_RIGHTSHIFT', 'KEY_SCROLLLOCK', 'KEY_PAUSE']
+    const hotkeyCombo = new Gtk.ComboBoxText({ valign: Gtk.Align.CENTER })
+    for (const k of HOTKEYS) { hotkeyCombo.append_text(k) }
+    const currentHotkey = settings.get_string('hotkey')
+    hotkeyCombo.set_active(Math.max(0, HOTKEYS.indexOf(currentHotkey)))
+    hotkeyCombo.connect('changed', () => {
+      settings.set_string('hotkey', hotkeyCombo.get_active_text())
     })
 
-    const hotkeyRow = new Adw.ActionRow({ title: 'Hotkey (evdev key name)' })
-    hotkeyRow.add_suffix(hotkeyEntry)
+    const hotkeyRow = new Adw.ActionRow({ title: 'Hotkey' })
+    hotkeyRow.add_suffix(hotkeyCombo)
     hotkeyRow.activatable = false
     group.add(hotkeyRow)
 
