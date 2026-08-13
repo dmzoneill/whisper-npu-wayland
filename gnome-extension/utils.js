@@ -6,6 +6,10 @@ Gio._promisify(Gio.Subprocess.prototype, 'communicate_utf8_async')
 
 const LOG_PREFIX = '[whisper-npu]'
 
+// ydotoold creates the socket at /tmp/.ydotool_socket but the ydotool client
+// defaults to /run/user/<uid>/.ydotool_socket — they differ. Set explicitly.
+const YDOTOOL_SOCKET = '/tmp/.ydotool_socket'
+
 export function logDebug (message) {
   console.log(`${LOG_PREFIX} ${message}`) // eslint-disable-line no-undef
 }
@@ -301,13 +305,13 @@ export async function downloadLlmModel (org, modelName, cancellable = null) {
 }
 
 export async function typeText (text, delayMs = 4) {
-  return execCommand(['ydotool', 'type', '-d', String(delayMs), '--', text])
+  return execCommand(['env', `YDOTOOL_SOCKET=${YDOTOOL_SOCKET}`, 'ydotool', 'type', '-d', String(delayMs), '--', text])
 }
 
 export async function backspaceN (n) {
   const promises = []
   for (let i = 0; i < n; i++) {
-    promises.push(execCommand(['ydotool', 'key', '14:1', '14:0']))
+    promises.push(execCommand(['env', `YDOTOOL_SOCKET=${YDOTOOL_SOCKET}`, 'ydotool', 'key', '14:1', '14:0']))
   }
   return Promise.all(promises)
 }
