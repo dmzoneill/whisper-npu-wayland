@@ -609,7 +609,7 @@ const WhisperIndicator = GObject.registerClass(
       this.menu.addMenuItem(this._statusItem)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      // Settings submenu — device, hotkey, language etc. nested inside
+      // Settings — flat scrollable submenu (no nested submenus)
       const settingsSection = new PopupMenu.PopupSubMenuMenuItem(_('Settings'))
       this._buildSettingsGroup(settingsSection)
       settingsSection.menu.connect('open-state-changed', (_m, open) => {
@@ -617,21 +617,34 @@ const WhisperIndicator = GObject.registerClass(
       })
       this.menu.addMenuItem(settingsSection)
 
-      // Features submenu — all toggles
+      // Features — flat switches submenu
       const featuresSection = new PopupMenu.PopupSubMenuMenuItem(_('Features'))
       this._buildFeaturesGroup(featuresSection)
-      featuresSection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Features submenu open=${open} items=${featuresSection.menu._getMenuItems().length}`)
-      })
       this.menu.addMenuItem(featuresSection)
 
-      // Models submenu — STT, LLM, export
-      const modelsSection = new PopupMenu.PopupSubMenuMenuItem(_('Models'))
-      this._buildModelsGroup(modelsSection)
-      modelsSection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Models submenu open=${open} items=${modelsSection.menu._getMenuItems().length}`)
-      })
-      this.menu.addMenuItem(modelsSection)
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      // STT and LLM model sections at top level — avoids nesting limitation
+      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
+      this._modelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
+      this.menu.addMenuItem(this._modelSection)
+
+      this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
+      this._llmModelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
+      this.menu.addMenuItem(this._llmModelSection)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      // Export History — flat items, no submenu needed
+      for (const [label, fmt] of [['Export JSON', 'json'], ['Export Markdown', 'markdown'], ['Export SRT', 'srt']]) {
+        const item = new PopupMenu.PopupMenuItem(_(label))
+        item.connect('activate', () => this._exportHistory(fmt))
+        this.menu.addMenuItem(item)
+      }
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
@@ -647,111 +660,79 @@ const WhisperIndicator = GObject.registerClass(
     }
 
     _buildSettingsGroup (section) {
-      logDebug('_buildSettingsGroup: start')
-      this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Device: ${this._settings.get_string('device')}`)
-      )
-      this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
-      this._deviceSection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Device nested submenu open=${open} items=${this._deviceSection.menu._getMenuItems().length}`)
-      })
-      section.menu.addMenuItem(this._deviceSection)
+      // Flat helper — PopupSeparatorMenuItem as header, PopupMenuItems as radio options.
+      // No nested PopupSubMenuMenuItems: GNOME Shell closes the parent when a child
+      // submenu activates, leaving child items orphaned with no visual context.
+      const addStringRadio = (header, options, settingKey, labelFn = null, valueFn = null) => {
+        section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem(_(header)))
+        const current = this._settings.get_string(settingKey)
+        const items = []
+        for (const opt of options) {
+          const label = labelFn ? labelFn(opt) : (Array.isArray(opt) ? opt[0] : opt)
+          const value = valueFn ? valueFn(opt) : (Array.isArray(opt) ? opt[1] : opt)
+          const item = new PopupMenu.PopupMenuItem(_(label))
+          if (value === current) item.setOrnament(PopupMenu.Ornament.DOT)
+          item.connect('activate', () => {
+            this._settings.set_string(settingKey, value)
+            for (const [i, it] of items.entries()) {
+              const v = valueFn ? valueFn(options[i]) : (Array.isArray(options[i]) ? options[i][1] : options[i])
+              it.setOrnament(v === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
+            }
+          })
+          section.menu.addMenuItem(item)
+          items.push(item)
+        }
+      }
 
-      this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Backend: ${this._settings.get_string('backend')}`)
-      )
-      this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
-      this._backendSection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Backend nested submenu open=${open} items=${this._backendSection.menu._getMenuItems().length}`)
-      })
-      section.menu.addMenuItem(this._backendSection)
+      addStringRadio('Device', DEVICES, 'device')
+      addStringRadio('Backend', BACKENDS, 'backend')
+      addStringRadio('Hotkey', HOTKEYS, 'hotkey', k => this._formatHotkey(k))
+      addStringRadio('Recall Key', HOTKEYS, 'recall-key', k => this._formatHotkey(k))
+      addStringRadio('Language', LANGUAGES, 'language')
+      addStringRadio('Translate To', TRANSLATE_TARGETS, 'translate-to')
 
-      this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
-      )
-      this._buildHotkeyGroup(this._hotkeySection)
-      this._hotkeySection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Hotkey nested submenu open=${open} items=${this._hotkeySection.menu._getMenuItems().length}`)
-      })
-      section.menu.addMenuItem(this._hotkeySection)
-
-      this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
-      )
-      this._buildRecallKeyGroup(this._recallKeySection)
-      section.menu.addMenuItem(this._recallKeySection)
-
-      const currentLang = this._settings.get_string('language')
-      const langLabel = LANGUAGES.find(l => l[1] === currentLang)
-      this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
-      )
-      this._buildLanguageGroup(this._languageSection)
-      section.menu.addMenuItem(this._languageSection)
-
-      const currentTranslate = this._settings.get_string('translate-to')
-      const translateLabel = TRANSLATE_TARGETS.find(t => t[1] === currentTranslate)
-      this._translateSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Translate To: ${translateLabel ? translateLabel[0] : 'Disabled'}`)
-      )
-      this._buildTranslateGroup(this._translateSection)
-      section.menu.addMenuItem(this._translateSection)
-
-      this._vadSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`VAD Threshold: ${this._settings.get_int('vad-threshold')} dB`)
-      )
+      // VAD Threshold (int setting)
       const vadOptions = [
-        ['-20 dB (aggressive)', -20],
-        ['-30 dB', -30],
-        ['-40 dB (default)', -40],
-        ['-50 dB', -50],
-        ['-60 dB (sensitive)', -60]
+        ['-20 dB (aggressive)', -20], ['-30 dB', -30], ['-40 dB (default)', -40],
+        ['-50 dB', -50], ['-60 dB (sensitive)', -60]
       ]
+      section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem(_('VAD Threshold')))
+      const vadItems = []
       const currentVad = this._settings.get_int('vad-threshold')
       for (const [label, value] of vadOptions) {
         const item = new PopupMenu.PopupMenuItem(label)
         if (value === currentVad) item.setOrnament(PopupMenu.Ornament.DOT)
         item.connect('activate', () => {
           this._settings.set_int('vad-threshold', value)
-          this._vadSection.label.set_text(`VAD Threshold: ${value} dB`)
-          const items = this._vadSection.menu._getMenuItems()
-          for (const [i, mi] of items.entries()) {
-            if (mi.label && i < vadOptions.length) {
-              mi.setOrnament(vadOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
-            }
+          for (const [i, it] of vadItems.entries()) {
+            it.setOrnament(vadOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
           }
         })
-        this._vadSection.menu.addMenuItem(item)
+        section.menu.addMenuItem(item)
+        vadItems.push(item)
       }
-      section.menu.addMenuItem(this._vadSection)
 
-      this._streamIntervalSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Stream Interval: ${this._settings.get_double('stream-interval')}s`)
-      )
+      // Stream Interval (double setting)
       const intervalOptions = [
-        ['1.0s (fast)', 1.0],
-        ['2.0s', 2.0],
-        ['3.0s (default)', 3.0],
-        ['5.0s', 5.0],
-        ['10.0s (slow)', 10.0]
+        ['1.0s (fast)', 1.0], ['2.0s', 2.0], ['3.0s (default)', 3.0],
+        ['5.0s', 5.0], ['10.0s (slow)', 10.0]
       ]
+      section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem(_('Stream Interval')))
+      const intervalItems = []
       const currentInterval = this._settings.get_double('stream-interval')
       for (const [label, value] of intervalOptions) {
         const item = new PopupMenu.PopupMenuItem(label)
         if (value === currentInterval) item.setOrnament(PopupMenu.Ornament.DOT)
         item.connect('activate', () => {
           this._settings.set_double('stream-interval', value)
-          this._streamIntervalSection.label.set_text(`Stream Interval: ${value}s`)
-          const items = this._streamIntervalSection.menu._getMenuItems()
-          for (const [i, mi] of items.entries()) {
-            if (mi.label && i < intervalOptions.length) {
-              mi.setOrnament(intervalOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
-            }
+          for (const [i, it] of intervalItems.entries()) {
+            it.setOrnament(intervalOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
           }
         })
-        this._streamIntervalSection.menu.addMenuItem(item)
+        section.menu.addMenuItem(item)
+        intervalItems.push(item)
       }
-      section.menu.addMenuItem(this._streamIntervalSection)
+
       logDebug(`_buildSettingsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
@@ -833,32 +814,6 @@ const WhisperIndicator = GObject.registerClass(
       })
       section.menu.addMenuItem(this._muteStreamsToggle)
       logDebug(`_buildFeaturesGroup: done, items=${section.menu._getMenuItems().length}`)
-    }
-
-    _buildModelsGroup (section) {
-      logDebug('_buildModelsGroup: start')
-      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
-      this._modelSection.menu.addMenuItem(
-        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-      )
-      section.menu.addMenuItem(this._modelSection)
-
-      this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
-      this._llmModelSection.menu.addMenuItem(
-        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-      )
-      section.menu.addMenuItem(this._llmModelSection)
-
-      section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      this._exportSection = new PopupMenu.PopupSubMenuMenuItem(_('Export History'))
-      for (const [label, fmt] of [['JSON', 'json'], ['Markdown', 'markdown'], ['SRT (Subtitles)', 'srt']]) {
-        const item = new PopupMenu.PopupMenuItem(label)
-        item.connect('activate', () => this._exportHistory(fmt))
-        this._exportSection.menu.addMenuItem(item)
-      }
-      section.menu.addMenuItem(this._exportSection)
-      logDebug(`_buildModelsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     // -- Radio groups -------------------------------------------------------
