@@ -18,6 +18,8 @@ SYSTEM_PKGS := ydotool pipewire-pulseaudio pipewire-utils pulseaudio-utils \
 
 WHISPER_CPP_VERSION ?= v1.7.4
 WHISPER_CPP_SRC     := $(PROJECT_DIR)/.whisper-cpp
+WHISPER_CPP_MODEL   ?= ggml-base.en.bin
+WHISPER_CPP_MODELS_DIR := $(HOME)/.cache/whisper
 
 SERVICE_FILES := $(SYSTEMD_DIR)/whisper-server.service \
                  $(SYSTEMD_DIR)/whisper-cpp-server.service \
@@ -185,7 +187,7 @@ install-permissions: ## Add user to input group for evdev access
 # Models
 # ----------------------------------------------------------------------------
 
-install-models: ## Download default OpenVINO model if not already present
+install-models: ## Download default OpenVINO model and GGML model for whisper-cpp
 	@mkdir -p $(WHISPER_MODELS_DIR)
 	@if [ -d "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" ]; then \
 		echo "Model $(WHISPER_MODEL) already present"; \
@@ -193,6 +195,14 @@ install-models: ## Download default OpenVINO model if not already present
 		echo "Downloading $(WHISPER_MODEL) from $(HF_ORG)..."; \
 		GIT_LFS_SKIP_SMUDGE=1 git clone "https://huggingface.co/$(HF_ORG)/$(WHISPER_MODEL)" "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" && \
 		cd "$(WHISPER_MODELS_DIR)/$(WHISPER_MODEL)" && git lfs pull; \
+	fi
+	@mkdir -p $(WHISPER_CPP_MODELS_DIR)
+	@if [ -f "$(WHISPER_CPP_MODELS_DIR)/$(WHISPER_CPP_MODEL)" ]; then \
+		echo "GGML model $(WHISPER_CPP_MODEL) already present"; \
+	else \
+		echo "Downloading GGML model $(WHISPER_CPP_MODEL)..."; \
+		curl -L "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$(WHISPER_CPP_MODEL)" \
+			-o "$(WHISPER_CPP_MODELS_DIR)/$(WHISPER_CPP_MODEL)"; \
 	fi
 
 # ----------------------------------------------------------------------------
@@ -226,16 +236,18 @@ $(SYSTEMD_DIR)/whisper-server.service:
 
 $(SYSTEMD_DIR)/whisper-cpp-server.service:
 	@mkdir -p $(SYSTEMD_DIR)
-	@printf '%s\n' \
+	@OPENVINO_LIBS=$$($(PYTHON) -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'libs'))" 2>/dev/null || echo ""); \
+	LD_PATH="$${OPENVINO_LIBS:+$${OPENVINO_LIBS}:}/usr/local/lib64:/usr/local/lib"; \
+	printf '%s\n' \
 		'[Unit]' \
 		'Description=Whisper.cpp Speech-to-Text Server (NPU)' \
 		'After=basic.target' \
 		'' \
 		'[Service]' \
 		'Type=simple' \
-		'WorkingDirectory=$(PROJECT_DIR)' \
-		'Environment=LD_LIBRARY_PATH=/usr/local/lib/openvino:/usr/local/lib:/usr/local/lib64' \
-		'ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --device $(WHISPER_CPP_DEVICE)' \
+		"WorkingDirectory=$(PROJECT_DIR)" \
+		"Environment=LD_LIBRARY_PATH=$$LD_PATH" \
+		"ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --device $(WHISPER_CPP_DEVICE)" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'' \
