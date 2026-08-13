@@ -602,155 +602,79 @@ const WhisperIndicator = GObject.registerClass(
     // -- Menu ---------------------------------------------------------------
 
     _buildMenu () {
+      // Status — always at top
       this._statusItem = new PopupMenu.PopupMenuItem(_('Status: Checking...'), { reactive: false })
       this._statusItem.label.add_style_class_name('whisper-status-label')
       this.menu.addMenuItem(this._statusItem)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      // Device / backend / hotkey — at top so they're always visible
+      // Settings submenu — device, hotkey, language etc. nested inside
+      const settingsSection = new PopupMenu.PopupSubMenuMenuItem(_('Settings'))
+      this._buildSettingsGroup(settingsSection)
+      this.menu.addMenuItem(settingsSection)
+
+      // Features submenu — all toggles
+      const featuresSection = new PopupMenu.PopupSubMenuMenuItem(_('Features'))
+      this._buildFeaturesGroup(featuresSection)
+      this.menu.addMenuItem(featuresSection)
+
+      // Models submenu — STT, LLM, export
+      const modelsSection = new PopupMenu.PopupSubMenuMenuItem(_('Models'))
+      this._buildModelsGroup(modelsSection)
+      this.menu.addMenuItem(modelsSection)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      this._restartServerItem = new PopupMenu.PopupMenuItem(_('Restart Server'))
+      this._restartServerItem.connect('activate', () => this._restartServer())
+      this.menu.addMenuItem(this._restartServerItem)
+
+      const prefsItem = new PopupMenu.PopupMenuItem(_('Preferences...'))
+      prefsItem.connect('activate', () => this._extension.openPreferences())
+      this.menu.addMenuItem(prefsItem)
+    }
+
+    _buildSettingsGroup (section) {
       this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Device: ${this._settings.get_string('device')}`)
       )
       this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
-      this.menu.addMenuItem(this._deviceSection)
+      section.menu.addMenuItem(this._deviceSection)
 
       this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Backend: ${this._settings.get_string('backend')}`)
       )
       this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
-      this.menu.addMenuItem(this._backendSection)
+      section.menu.addMenuItem(this._backendSection)
 
       this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
       )
       this._buildHotkeyGroup(this._hotkeySection)
-      this.menu.addMenuItem(this._hotkeySection)
+      section.menu.addMenuItem(this._hotkeySection)
 
-      // Recall key selector
       this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
       )
       this._buildRecallKeyGroup(this._recallKeySection)
-      this.menu.addMenuItem(this._recallKeySection)
+      section.menu.addMenuItem(this._recallKeySection)
 
-      // Language selector
       const currentLang = this._settings.get_string('language')
       const langLabel = LANGUAGES.find(l => l[1] === currentLang)
       this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
       )
       this._buildLanguageGroup(this._languageSection)
-      this.menu.addMenuItem(this._languageSection)
+      section.menu.addMenuItem(this._languageSection)
 
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // Language Buddy toggle
-      this._buddyToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Language Buddy'),
-        this._settings.get_boolean('language-buddy-enabled')
-      )
-      this._buddyToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('language-buddy-enabled', state)
-        logDebug(`Language Buddy ${state ? 'enabled' : 'disabled'}`)
-      })
-      this.menu.addMenuItem(this._buddyToggle)
-
-      this._bypassToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('  Bypass (type original, show suggestions)'),
-        this._settings.get_boolean('language-buddy-bypass')
-      )
-      this._bypassToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('language-buddy-bypass', state)
-        logDebug(`Language Buddy bypass ${state ? 'enabled' : 'disabled'}`)
-      })
-      this.menu.addMenuItem(this._bypassToggle)
-
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // STT models (installed + available downloads)
-      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
-      this._modelSection.menu.addMenuItem(
-        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-      )
-      this.menu.addMenuItem(this._modelSection)
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // LLM model section
-      this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
-      this._llmModelSection.menu.addMenuItem(
-        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
-      )
-      this.menu.addMenuItem(this._llmModelSection)
-
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // Feature toggles
-      this._voiceCommandsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Voice Commands'),
-        this._settings.get_boolean('voice-commands-enabled')
-      )
-      this._voiceCommandsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('voice-commands-enabled', state)
-      })
-      this.menu.addMenuItem(this._voiceCommandsToggle)
-
-      this._notificationsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Notifications'),
-        this._settings.get_boolean('notifications-enabled')
-      )
-      this._notificationsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('notifications-enabled', state)
-      })
-      this.menu.addMenuItem(this._notificationsToggle)
-
-      this._autoPunctuateToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Auto-Punctuate'),
-        this._settings.get_boolean('auto-punctuate')
-      )
-      this._autoPunctuateToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('auto-punctuate', state)
-      })
-      this.menu.addMenuItem(this._autoPunctuateToggle)
-
-      this._audioFeedbackToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Audio Feedback'),
-        this._settings.get_boolean('audio-feedback-enabled')
-      )
-      this._audioFeedbackToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('audio-feedback-enabled', state)
-      })
-      this.menu.addMenuItem(this._audioFeedbackToggle)
-
-      this._formattingToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Dictation Formatting'),
-        this._settings.get_boolean('dictation-formatting-enabled')
-      )
-      this._formattingToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('dictation-formatting-enabled', state)
-      })
-      this.menu.addMenuItem(this._formattingToggle)
-
-      this._muteStreamsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Mute Other Streams'),
-        this._settings.get_boolean('mute-other-streams')
-      )
-      this._muteStreamsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('mute-other-streams', state)
-      })
-      this.menu.addMenuItem(this._muteStreamsToggle)
-
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // Translate To submenu
       const currentTranslate = this._settings.get_string('translate-to')
       const translateLabel = TRANSLATE_TARGETS.find(t => t[1] === currentTranslate)
       this._translateSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Translate To: ${translateLabel ? translateLabel[0] : 'Disabled'}`)
       )
       this._buildTranslateGroup(this._translateSection)
-      this.menu.addMenuItem(this._translateSection)
+      section.menu.addMenuItem(this._translateSection)
 
-      // VAD Threshold submenu
       this._vadSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`VAD Threshold: ${this._settings.get_int('vad-threshold')} dB`)
       )
@@ -777,9 +701,8 @@ const WhisperIndicator = GObject.registerClass(
         })
         this._vadSection.menu.addMenuItem(item)
       }
-      this.menu.addMenuItem(this._vadSection)
+      section.menu.addMenuItem(this._vadSection)
 
-      // Stream Interval submenu
       this._streamIntervalSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Stream Interval: ${this._settings.get_double('stream-interval')}s`)
       )
@@ -806,32 +729,109 @@ const WhisperIndicator = GObject.registerClass(
         })
         this._streamIntervalSection.menu.addMenuItem(item)
       }
-      this.menu.addMenuItem(this._streamIntervalSection)
+      section.menu.addMenuItem(this._streamIntervalSection)
+    }
 
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+    _buildFeaturesGroup (section) {
+      this._buddyToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Language Buddy'),
+        this._settings.get_boolean('language-buddy-enabled')
+      )
+      this._buddyToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('language-buddy-enabled', state)
+        logDebug(`Language Buddy ${state ? 'enabled' : 'disabled'}`)
+      })
+      section.menu.addMenuItem(this._buddyToggle)
 
-      // Export History submenu
+      this._bypassToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Buddy Bypass'),
+        this._settings.get_boolean('language-buddy-bypass')
+      )
+      this._bypassToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('language-buddy-bypass', state)
+        logDebug(`Language Buddy bypass ${state ? 'enabled' : 'disabled'}`)
+      })
+      section.menu.addMenuItem(this._bypassToggle)
+
+      section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
+      this._voiceCommandsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Voice Commands'),
+        this._settings.get_boolean('voice-commands-enabled')
+      )
+      this._voiceCommandsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('voice-commands-enabled', state)
+      })
+      section.menu.addMenuItem(this._voiceCommandsToggle)
+
+      this._notificationsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Notifications'),
+        this._settings.get_boolean('notifications-enabled')
+      )
+      this._notificationsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('notifications-enabled', state)
+      })
+      section.menu.addMenuItem(this._notificationsToggle)
+
+      this._autoPunctuateToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Auto-Punctuate'),
+        this._settings.get_boolean('auto-punctuate')
+      )
+      this._autoPunctuateToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('auto-punctuate', state)
+      })
+      section.menu.addMenuItem(this._autoPunctuateToggle)
+
+      this._audioFeedbackToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Audio Feedback'),
+        this._settings.get_boolean('audio-feedback-enabled')
+      )
+      this._audioFeedbackToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('audio-feedback-enabled', state)
+      })
+      section.menu.addMenuItem(this._audioFeedbackToggle)
+
+      this._formattingToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Dictation Formatting'),
+        this._settings.get_boolean('dictation-formatting-enabled')
+      )
+      this._formattingToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('dictation-formatting-enabled', state)
+      })
+      section.menu.addMenuItem(this._formattingToggle)
+
+      this._muteStreamsToggle = new PopupMenu.PopupSwitchMenuItem(
+        _('Mute Other Streams'),
+        this._settings.get_boolean('mute-other-streams')
+      )
+      this._muteStreamsToggle.connect('toggled', (_item, state) => {
+        this._settings.set_boolean('mute-other-streams', state)
+      })
+      section.menu.addMenuItem(this._muteStreamsToggle)
+    }
+
+    _buildModelsGroup (section) {
+      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
+      this._modelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
+      section.menu.addMenuItem(this._modelSection)
+
+      this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
+      this._llmModelSection.menu.addMenuItem(
+        new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
+      )
+      section.menu.addMenuItem(this._llmModelSection)
+
+      section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
       this._exportSection = new PopupMenu.PopupSubMenuMenuItem(_('Export History'))
       for (const [label, fmt] of [['JSON', 'json'], ['Markdown', 'markdown'], ['SRT (Subtitles)', 'srt']]) {
         const item = new PopupMenu.PopupMenuItem(label)
         item.connect('activate', () => this._exportHistory(fmt))
         this._exportSection.menu.addMenuItem(item)
       }
-      this.menu.addMenuItem(this._exportSection)
-
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      this._restartServerItem = new PopupMenu.PopupMenuItem(_('Restart Server'))
-      this._restartServerItem.connect('activate', () => this._restartServer())
-      this.menu.addMenuItem(this._restartServerItem)
-
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      const prefsItem = new PopupMenu.PopupMenuItem(_('Preferences...'))
-      prefsItem.connect('activate', () => {
-        this._extension.openPreferences()
-      })
-      this.menu.addMenuItem(prefsItem)
+      section.menu.addMenuItem(this._exportSection)
     }
 
     // -- Radio groups -------------------------------------------------------
