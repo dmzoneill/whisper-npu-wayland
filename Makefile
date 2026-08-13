@@ -437,7 +437,9 @@ extension-test-start: extension-install ## Start GNOME Shell 50 devkit on host d
 		--device /dev/dri \
 		--volume $(WAYLAND_SOCK):/run/user/0/wayland-99:rw \
 		--volume /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro \
+		--volume /run/user/$(shell id -u)/pipewire-0:/run/user/0/pipewire-0:rw \
 		--env WAYLAND_DISPLAY=wayland-99 \
+		--env PIPEWIRE_REMOTE=/run/user/0/pipewire-0 \
 		--env DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \
 		--env XDG_RUNTIME_DIR=/run/user/0 \
 		--volume $(EXTENSION_DIR):/root/.local/share/gnome-shell/extensions/$(EXTENSION_UUID):ro \
