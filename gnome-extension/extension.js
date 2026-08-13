@@ -951,6 +951,7 @@ const WhisperIndicator = GObject.registerClass(
 
     _buildHotkeyGroup (section) {
       const current = this._settings.get_string('hotkey')
+      logDebug(`_buildHotkeyGroup: ${HOTKEYS.length} keys, current=${current}`)
       for (const key of HOTKEYS) {
         const label = this._formatHotkey(key)
         const item = new PopupMenu.PopupMenuItem(label)
@@ -964,6 +965,7 @@ const WhisperIndicator = GObject.registerClass(
         })
         section.menu.addMenuItem(item)
       }
+      logDebug(`_buildHotkeyGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _updateRadioOrnaments (section, selected) {
