@@ -607,6 +607,43 @@ const WhisperIndicator = GObject.registerClass(
       this.menu.addMenuItem(this._statusItem)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
+      // Device / backend / hotkey — at top so they're always visible
+      this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Device: ${this._settings.get_string('device')}`)
+      )
+      this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
+      this.menu.addMenuItem(this._deviceSection)
+
+      this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Backend: ${this._settings.get_string('backend')}`)
+      )
+      this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
+      this.menu.addMenuItem(this._backendSection)
+
+      this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
+      )
+      this._buildHotkeyGroup(this._hotkeySection)
+      this.menu.addMenuItem(this._hotkeySection)
+
+      // Recall key selector
+      this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
+      )
+      this._buildRecallKeyGroup(this._recallKeySection)
+      this.menu.addMenuItem(this._recallKeySection)
+
+      // Language selector
+      const currentLang = this._settings.get_string('language')
+      const langLabel = LANGUAGES.find(l => l[1] === currentLang)
+      this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
+        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
+      )
+      this._buildLanguageGroup(this._languageSection)
+      this.menu.addMenuItem(this._languageSection)
+
+      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
+
       // Language Buddy toggle
       this._buddyToggle = new PopupMenu.PopupSwitchMenuItem(
         _('Language Buddy'),
@@ -627,6 +664,7 @@ const WhisperIndicator = GObject.registerClass(
         logDebug(`Language Buddy bypass ${state ? 'enabled' : 'disabled'}`)
       })
       this.menu.addMenuItem(this._bypassToggle)
+
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       // STT models (installed + available downloads)
@@ -643,42 +681,6 @@ const WhisperIndicator = GObject.registerClass(
         new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
       )
       this.menu.addMenuItem(this._llmModelSection)
-      this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
-
-      // Server options
-      this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Device: ${this._settings.get_string('device')}`)
-      )
-      this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
-      this.menu.addMenuItem(this._deviceSection)
-
-      this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Backend: ${this._settings.get_string('backend')}`)
-      )
-      this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
-      this.menu.addMenuItem(this._backendSection)
-
-      this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
-      )
-      this._buildHotkeyGroup(this._hotkeySection)
-      this.menu.addMenuItem(this._hotkeySection)
-
-      // Language selector
-      const currentLang = this._settings.get_string('language')
-      const langLabel = LANGUAGES.find(l => l[1] === currentLang)
-      this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
-      )
-      this._buildLanguageGroup(this._languageSection)
-      this.menu.addMenuItem(this._languageSection)
-
-      // Recall key selector
-      this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
-      )
-      this._buildRecallKeyGroup(this._recallKeySection)
-      this.menu.addMenuItem(this._recallKeySection)
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
