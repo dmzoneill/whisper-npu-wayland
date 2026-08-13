@@ -652,18 +652,27 @@ const WhisperIndicator = GObject.registerClass(
         _(`Device: ${this._settings.get_string('device')}`)
       )
       this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
+      this._deviceSection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Device nested submenu open=${open} items=${this._deviceSection.menu._getMenuItems().length}`)
+      })
       section.menu.addMenuItem(this._deviceSection)
 
       this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Backend: ${this._settings.get_string('backend')}`)
       )
       this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
+      this._backendSection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Backend nested submenu open=${open} items=${this._backendSection.menu._getMenuItems().length}`)
+      })
       section.menu.addMenuItem(this._backendSection)
 
       this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
       )
       this._buildHotkeyGroup(this._hotkeySection)
+      this._hotkeySection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Hotkey nested submenu open=${open} items=${this._hotkeySection.menu._getMenuItems().length}`)
+      })
       section.menu.addMenuItem(this._hotkeySection)
 
       this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
