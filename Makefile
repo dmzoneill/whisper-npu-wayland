@@ -429,7 +429,7 @@ extension-test-build: ## Build GNOME 47 test container image (Fedora 41, one-tim
 extension-test-start: extension-install ## Start GNOME Shell 47 in Xephyr — hot-reload dev env (no logout)
 	@pkill Xephyr 2>/dev/null || true
 	@podman rm -f $(EXTENSION_TEST_CONTAINER) 2>/dev/null || true
-	Xephyr $(EXTENSION_TEST_DISPLAY) -screen 1920x1080 &
+	Xephyr $(EXTENSION_TEST_DISPLAY) -screen 1920x1080 -ac &
 	@sleep 1
 	podman run \
 		--detach \
