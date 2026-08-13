@@ -376,9 +376,13 @@ extension-enable: ## Enable GNOME extension
 extension-disable: ## Disable GNOME extension
 	-gnome-extensions disable $(EXTENSION_UUID)
 
-extension-reload: extension-install ## Reload GNOME extension in the running session (no logout needed)
-	gnome-extensions disable $(EXTENSION_UUID) && sleep 1 && gnome-extensions enable $(EXTENSION_UUID)
-	@echo "Extension reloaded."
+extension-reload: extension-install ## Hot-reload extension JS — restarts GNOME Shell in-place (no logout needed)
+	@echo "Restarting GNOME Shell in-place (Alt+F2 > r)..."
+	@YDOTOOL_SOCKET=$$(ls /tmp/.ydotool_socket /run/user/$$(id -u)/.ydotool_socket 2>/dev/null | head -1); \
+	YDOTOOL_SOCKET=$$YDOTOOL_SOCKET ydotool key 56:1 60:1 60:0 56:0 && sleep 1 && \
+	YDOTOOL_SOCKET=$$YDOTOOL_SOCKET ydotool type -- "r" && sleep 0.5 && \
+	YDOTOOL_SOCKET=$$YDOTOOL_SOCKET ydotool key 28:1 28:0
+	@echo "GNOME Shell restarting — extension will reload from disk."
 
 extension-dev: extension-install extension-enable ## Install and enable GNOME extension for development
 	@echo ""
