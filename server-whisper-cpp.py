@@ -217,6 +217,7 @@ class WhisperCppModel:
         params.single_segment = False
         params.n_threads = 4
         params.language = b"en"
+        params.no_speech_thold = 1.0  # disable no-speech suppression; user pressed PTT so trust there is speech
 
         arr = (ctypes.c_float * len(audio_f32))(*audio_f32)
         t0 = time.time()
