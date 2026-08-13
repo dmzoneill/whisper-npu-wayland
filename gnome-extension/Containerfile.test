@@ -5,6 +5,7 @@ FROM docker.io/library/fedora:44
 # via mounted host Wayland socket.
 RUN dnf install -y \
     gnome-shell \
+    mutter-devkit \
     dbus-daemon \
     glib2 \
     adwaita-icon-theme \

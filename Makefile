@@ -433,10 +433,14 @@ extension-test-start: extension-install ## Start GNOME Shell 50 devkit on host d
 	podman run \
 		--detach \
 		--name $(EXTENSION_TEST_CONTAINER) \
-		--volume $(WAYLAND_SOCK):/run/user/0/wayland-0:rw,z \
-		--env WAYLAND_DISPLAY=wayland-0 \
+		--security-opt label=disable \
+		--device /dev/dri \
+		--volume $(WAYLAND_SOCK):/run/user/0/wayland-99:rw \
+		--volume /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro \
+		--env WAYLAND_DISPLAY=wayland-99 \
+		--env DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \
 		--env XDG_RUNTIME_DIR=/run/user/0 \
-		--volume $(EXTENSION_DIR):/root/.local/share/gnome-shell/extensions/$(EXTENSION_UUID):ro,z \
+		--volume $(EXTENSION_DIR):/root/.local/share/gnome-shell/extensions/$(EXTENSION_UUID):ro \
 		$(EXTENSION_TEST_IMAGE)
 	@echo "GNOME Shell 50 (devkit) starting — mutter-devkit window will appear on host desktop."
 	@echo "  Logs:   make extension-test-logs"
