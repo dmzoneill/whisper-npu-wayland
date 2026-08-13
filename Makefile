@@ -57,7 +57,7 @@ help: ## Show available targets
 # Full install
 # ----------------------------------------------------------------------------
 
-install: install-python install-system install-whisper-cpp install-permissions install-models install-services enable start ## Install everything
+install: install-python install-system install-whisper-cpp install-permissions install-models install-services extension-install enable start ## Install everything
 
 # ----------------------------------------------------------------------------
 # Python dependencies
@@ -346,14 +346,23 @@ EXTENSION_UUID    := whisper-npu@dmz.oneill
 EXTENSION_INSTALL := $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 SCHEMA_DIR        := $(HOME)/.local/share/glib-2.0/schemas
 
-extension-install: ## Install GNOME extension (symlink + schemas)
+extension-install: ## Install GNOME extension (symlink + schemas + pre-enable)
 	mkdir -p $(SCHEMA_DIR)
 	glib-compile-schemas $(EXTENSION_DIR)/schemas/
 	cp $(EXTENSION_DIR)/schemas/*.gschema.xml $(SCHEMA_DIR)/
 	glib-compile-schemas $(SCHEMA_DIR)/
 	ln -snf $(EXTENSION_DIR) $(EXTENSION_INSTALL)
-	@echo "Extension installed. Enable with: make extension-enable"
-	@echo "On Wayland, log out and back in to load the extension."
+	@CURRENT=$$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null | tr -d "[]'" | tr ',' '\n' | grep -v '^\s*$$'); \
+	if echo "$$CURRENT" | grep -qF "$(EXTENSION_UUID)"; then \
+		echo "  [x] $(EXTENSION_UUID) already in enabled-extensions"; \
+	else \
+		NEW=$$(echo "$$CURRENT" | grep -v '^\s*$$' | sed "s/^/'/;s/$$/'/"); \
+		LIST=$$(printf '%s\n' $$NEW "'$(EXTENSION_UUID)'" | paste -sd ',' -); \
+		gsettings set org.gnome.shell enabled-extensions "[$$LIST]" 2>/dev/null \
+			&& echo "  [x] $(EXTENSION_UUID) added to enabled-extensions" \
+			|| echo "  [!] Could not update enabled-extensions — run: make extension-enable"; \
+	fi
+	@echo "Extension installed. Log out and back in on Wayland to activate."
 
 extension-uninstall: extension-disable ## Uninstall GNOME extension
 	rm -f $(EXTENSION_INSTALL)
