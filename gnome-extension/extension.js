@@ -30,8 +30,11 @@ const DEVICES = ['auto', 'NPU', 'GPU', 'CUDA', 'CPU']
 const BACKENDS = ['openvino', 'whisper-cpp']
 const HOTKEYS = [
   'KEY_RIGHTCTRL',
+  'KEY_LEFTCTRL',
   'KEY_RIGHTALT',
+  'KEY_LEFTALT',
   'KEY_RIGHTSHIFT',
+  'KEY_LEFTSHIFT',
   'KEY_SCROLLLOCK',
   'KEY_PAUSE'
 ]
