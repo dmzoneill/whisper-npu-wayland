@@ -75,7 +75,14 @@ install-python: ## Install Python packages (auto-detects NPU/GPU/CUDA hardware)
 		echo "  [x] Intel iGPU/CPU detected"; \
 	fi; \
 	if nvidia-smi -L 2>/dev/null | grep -q "GPU"; then \
-		HAS_CUDA=1; echo "  [x] NVIDIA CUDA GPU detected"; \
+		HAS_CUDA=1; \
+		CUDA_MAJOR=$$(nvidia-smi 2>/dev/null | grep -oP 'CUDA( UMD)? Version: \K\d+' | head -1); \
+		echo "  [x] NVIDIA CUDA GPU detected (CUDA $${CUDA_MAJOR:-unknown})"; \
+		if [ -n "$$CUDA_MAJOR" ] && [ "$$CUDA_MAJOR" -lt 12 ]; then \
+			echo "  [!] Warning: CUDA $${CUDA_MAJOR} detected — faster-whisper requires CUDA 12+."; \
+			echo "      Upgrade driver or install manually: pip install 'faster-whisper<1.0' 'ctranslate2<4'"; \
+			HAS_CUDA=0; \
+		fi; \
 	fi; \
 	if [ $$HAS_INTEL -eq 0 ] && [ $$HAS_CUDA -eq 0 ]; then \
 		echo "  [ ] No accelerator found — installing OpenVINO for CPU fallback"; \
