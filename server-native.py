@@ -1,5 +1,4 @@
 import librosa
-import openvino_genai
 from flask import Flask, request, jsonify, Response
 import io
 import json
@@ -15,9 +14,8 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-DEVICE = os.environ.get("WHISPER_DEVICE", "NPU")
 MODEL_NAME = os.environ.get("WHISPER_MODEL", "whisper-small.en-fp16-ov")
-LLM_DEVICE = os.environ.get("WHISPER_LLM_DEVICE", DEVICE)
+CT2_MODEL_NAME = os.environ.get("WHISPER_CT2_MODEL", "small.en")
 LLM_MODEL = os.environ.get("WHISPER_LLM_MODEL", "")
 
 DEFAULT_TONES = {
@@ -25,6 +23,91 @@ DEFAULT_TONES = {
     "professional": "Rewrite the following text in a formal, professional business tone. Preserve the original meaning exactly. Return only the rewritten text, nothing else.",
     "summarize": "Summarize the following text in one concise sentence. Return only the summary, nothing else.",
 }
+
+
+def _detect_engine_and_device():
+    """Returns (engine, device).
+
+    Priority for auto: NPU > CUDA > Intel GPU > CPU.
+    Engine is 'openvino' or 'faster-whisper'.
+    """
+    raw = os.environ.get("WHISPER_DEVICE", "auto").strip()
+
+    if raw.lower().startswith("cuda"):
+        return "faster-whisper", raw.lower()
+
+    if raw.upper() in ("NPU", "GPU", "CPU"):
+        return "openvino", raw.upper()
+
+    if raw.upper() != "AUTO":
+        logger.warning(f"Unknown WHISPER_DEVICE '{raw}', falling back to auto-detect")
+
+    # Auto-detect
+    try:
+        import openvino as ov
+        avail = ov.Core().available_devices
+        if "NPU" in avail:
+            logger.info("Auto-detected device: NPU (OpenVINO)")
+            return "openvino", "NPU"
+    except ImportError:
+        pass
+
+    try:
+        import ctranslate2
+        if ctranslate2.get_cuda_device_count() > 0:
+            logger.info("Auto-detected device: CUDA (faster-whisper)")
+            return "faster-whisper", "cuda"
+    except ImportError:
+        pass
+
+    try:
+        import openvino as ov
+        avail = ov.Core().available_devices
+        gpu_devices = sorted([d for d in avail if d.startswith("GPU")], reverse=True)
+        if gpu_devices:
+            # Higher-indexed GPU is typically discrete (ARC) vs integrated (iGPU)
+            best_gpu = gpu_devices[0]
+            label = "Intel ARC (discrete)" if "." in best_gpu else "Intel GPU"
+            logger.info(f"Auto-detected device: {best_gpu} ({label}, OpenVINO)")
+            return "openvino", best_gpu
+        logger.info("Auto-detected device: CPU (OpenVINO)")
+        return "openvino", "CPU"
+    except ImportError:
+        pass
+
+    logger.info("Auto-detected device: CPU (faster-whisper)")
+    return "faster-whisper", "cpu"
+
+
+ENGINE, DEVICE = _detect_engine_and_device()
+logger.info(f"Engine: {ENGINE}  Device: {DEVICE}")
+
+_openvino_genai = None
+if ENGINE == "openvino":
+    try:
+        import openvino_genai
+        _openvino_genai = openvino_genai
+    except ImportError:
+        logger.error("OpenVINO engine selected but openvino-genai not installed")
+        raise
+
+_faster_whisper_cls = None
+if ENGINE == "faster-whisper":
+    try:
+        from faster_whisper import WhisperModel as _WhisperModel
+        _faster_whisper_cls = _WhisperModel
+    except ImportError:
+        logger.error("faster-whisper engine selected but faster-whisper not installed")
+        raise
+
+LLM_DEVICE = os.environ.get("WHISPER_LLM_DEVICE", DEVICE if ENGINE == "openvino" else "CPU")
+_openvino_genai_for_llm = None
+try:
+    import openvino_genai as _ov_genai_llm
+    _openvino_genai_for_llm = _ov_genai_llm
+except ImportError:
+    pass
+
 
 class MetricsCollector:
     def __init__(self):
@@ -63,6 +146,8 @@ class MetricsCollector:
                 "total_audio_seconds": round(self.total_audio_duration, 1),
                 "model_load_times": dict(self.model_load_times),
                 "uptime_seconds": round(time.time() - SERVER_START_TIME, 1),
+                "engine": ENGINE,
+                "device": DEVICE,
             }
             if self.last_request:
                 data["last_request"] = dict(self.last_request)
@@ -75,25 +160,122 @@ metrics = MetricsCollector()
 class ModelManager:
     def __init__(self):
         self.models_dir = os.path.expanduser("~/.whisper/models")
+        self.ct2_models_dir = os.path.expanduser("~/.whisper/ct2-models")
         self.pipelines = {}
-        self.default_model = MODEL_NAME
+        self.default_model = MODEL_NAME if ENGINE == "openvino" else CT2_MODEL_NAME
 
     def load_model(self, model_name):
-        if model_name not in self.pipelines:
+        if model_name in self.pipelines:
+            return self.pipelines[model_name]
+
+        t0 = time.time()
+        if ENGINE == "openvino":
+            assert _openvino_genai is not None
             model_path = os.path.join(self.models_dir, model_name)
             if not os.path.exists(model_path):
                 raise FileNotFoundError(f"Model {model_name} not found at {model_path}")
-            logger.info(f"Loading model: {model_name} on {DEVICE}")
-            t0 = time.time()
-            self.pipelines[model_name] = openvino_genai.WhisperPipeline(str(model_path), device=DEVICE)
-            elapsed = time.time() - t0
-            logger.info(f"Model loaded in {elapsed:.1f}s")
-            metrics.record_model_load(model_name, elapsed)
+            logger.info(f"Loading {model_name} on {DEVICE} (OpenVINO)")
+            self.pipelines[model_name] = _openvino_genai.WhisperPipeline(str(model_path), device=DEVICE)
+        else:
+            assert _faster_whisper_cls is not None
+            compute_type = "float16" if DEVICE.startswith("cuda") else "int8"
+            cuda_index = int(DEVICE.split(":")[1]) if ":" in DEVICE else 0
+            cuda_device = DEVICE.split(":")[0]
+            logger.info(f"Loading {model_name} on {DEVICE} (faster-whisper, compute={compute_type})")
+            local_path = os.path.join(self.ct2_models_dir, model_name)
+            source = local_path if os.path.isdir(local_path) else model_name
+            self.pipelines[model_name] = _faster_whisper_cls(
+                source,
+                device=cuda_device,
+                device_index=cuda_index,
+                compute_type=compute_type,
+            )
+
+        elapsed = time.time() - t0
+        logger.info(f"Model loaded in {elapsed:.1f}s")
+        metrics.record_model_load(model_name, elapsed)
         return self.pipelines[model_name]
 
+    def transcribe(self, model_name, audio_np, language=None):
+        """Returns (text, perf_dict)."""
+        pipeline = self.load_model(model_name)
+        t0 = time.time()
+        if ENGINE == "openvino":
+            gen_kwargs: dict = {}
+            if language:
+                gen_kwargs["language"] = f"<|{language}|>"
+            result = pipeline.generate(audio_np, **gen_kwargs)
+            elapsed = time.time() - t0
+            return str(result), _extract_perf_metrics(result), elapsed
+        else:
+            segments, info = pipeline.transcribe(audio_np, language=language or None, beam_size=5)
+            text = "".join(s.text for s in segments)
+            elapsed = time.time() - t0
+            perf = {"language": info.language, "language_probability": round(info.language_probability, 3)}
+            return text, perf, elapsed
+
+    def transcribe_stream(self, model_name, audio_np, language=None):
+        """Generator yielding text chunks."""
+        pipeline = self.load_model(model_name)
+        if ENGINE == "openvino":
+            q: queue.Queue = queue.Queue()
+
+            def cb(chunk):
+                q.put(chunk)
+                return 0
+
+            def run():
+                try:
+                    gen_kwargs: dict = {"streamer": cb, "return_timestamps": False}
+                    if language:
+                        gen_kwargs["language"] = f"<|{language}|>"
+                    pipeline.generate(audio_np, **gen_kwargs)
+                except Exception as e:
+                    logger.error(f"Streaming error: {e}")
+                finally:
+                    q.put(None)
+
+            threading.Thread(target=run, daemon=True).start()
+            while True:
+                chunk = q.get()
+                if chunk is None:
+                    break
+                yield chunk
+        else:
+            segments, _ = pipeline.transcribe(audio_np, language=language or None, beam_size=5)
+            for segment in segments:
+                yield segment.text
+
+    def transcribe_timestamps(self, model_name, audio_np, language=None):
+        """Returns (text, chunks, perf_dict)."""
+        pipeline = self.load_model(model_name)
+        if ENGINE == "openvino":
+            gen_kwargs: dict = {"return_timestamps": True}
+            if language:
+                gen_kwargs["language"] = f"<|{language}|>"
+            result = pipeline.generate(audio_np, **gen_kwargs)
+            chunks = [{"text": c.text, "start": round(c.start_ts, 3), "end": round(c.end_ts, 3)} for c in result.chunks]
+            return str(result), chunks, _extract_perf_metrics(result)
+        else:
+            segments, _ = pipeline.transcribe(audio_np, language=language or None, word_timestamps=False, beam_size=5)
+            segs = list(segments)
+            text = "".join(s.text for s in segs)
+            chunks = [{"text": s.text, "start": round(s.start, 3), "end": round(s.end, 3)} for s in segs]
+            return text, chunks, {}
+
     def list_models(self):
-        return [d for d in os.listdir(self.models_dir)
-                if os.path.isdir(os.path.join(self.models_dir, d)) and not d.startswith('.')]
+        if ENGINE == "openvino":
+            if not os.path.isdir(self.models_dir):
+                return []
+            return [d for d in os.listdir(self.models_dir)
+                    if os.path.isdir(os.path.join(self.models_dir, d)) and not d.startswith('.')]
+        else:
+            models = []
+            if os.path.isdir(self.ct2_models_dir):
+                models = [d for d in os.listdir(self.ct2_models_dir) if not d.startswith('.')]
+            if CT2_MODEL_NAME not in models:
+                models.insert(0, CT2_MODEL_NAME)
+            return models
 
 
 class LLMManager:
@@ -107,7 +289,14 @@ class LLMManager:
                 self.current_model = models[0]
                 logger.info(f"Auto-selected LLM: {self.current_model}")
 
+    def _require_openvino(self):
+        if _openvino_genai_for_llm is None:
+            raise RuntimeError("LLM features require OpenVINO GenAI (not installed on this device path)")
+        assert _openvino_genai_for_llm is not None
+
     def load_model(self, model_name=None):
+        self._require_openvino()
+        assert _openvino_genai_for_llm is not None
         model_name = model_name or self.current_model
         if not model_name:
             raise ValueError("No LLM model configured")
@@ -117,7 +306,7 @@ class LLMManager:
         if self.current_model != model_name or self.pipeline is None:
             logger.info(f"Loading LLM: {model_name} on {LLM_DEVICE}")
             t0 = time.time()
-            self.pipeline = openvino_genai.LLMPipeline(str(model_path), device=LLM_DEVICE)
+            self.pipeline = _openvino_genai_for_llm.LLMPipeline(str(model_path), device=LLM_DEVICE)
             self.current_model = model_name
             logger.info(f"LLM loaded in {time.time()-t0:.1f}s")
         return self.pipeline
@@ -133,8 +322,7 @@ class LLMManager:
         prompt = f"{tone_prompt}\n\n{text}"
         t0 = time.time()
         result = pipeline.generate(prompt, max_new_tokens=512, temperature=0.3)
-        elapsed = time.time() - t0
-        logger.info(f"Rewrote ({tone_name}) in {elapsed:.2f}s")
+        logger.info(f"Rewrote ({tone_name}) in {time.time()-t0:.2f}s")
         return str(result).strip()
 
     def punctuate(self, text):
@@ -142,8 +330,7 @@ class LLMManager:
         prompt = f"Add proper punctuation and capitalization to this text. Return only the corrected text, nothing else.\n\n{text}"
         t0 = time.time()
         result = pipeline.generate(prompt, max_new_tokens=256, temperature=0.1)
-        elapsed = time.time() - t0
-        logger.info(f"Punctuated in {elapsed:.2f}s")
+        logger.info(f"Punctuated in {time.time()-t0:.2f}s")
         return str(result).strip()
 
     def translate(self, text, target_language):
@@ -151,21 +338,47 @@ class LLMManager:
         prompt = f"Translate the following text to {target_language}. Return only the translation, nothing else.\n\n{text}"
         t0 = time.time()
         result = pipeline.generate(prompt, max_new_tokens=512, temperature=0.3)
-        elapsed = time.time() - t0
-        logger.info(f"Translated to {target_language} in {elapsed:.2f}s")
+        logger.info(f"Translated to {target_language} in {time.time()-t0:.2f}s")
         return str(result).strip()
+
+
+def _load_audio(req):
+    audio_data = req.get_data()
+    if not audio_data:
+        raise ValueError("No audio data")
+    audio_np, _ = librosa.load(io.BytesIO(audio_data), sr=16000)
+    return audio_np
+
+
+def _extract_perf_metrics(result):
+    try:
+        pm = result.perf_metrics
+        return {
+            "features_extraction_ms": round(pm.get_features_extraction_duration().mean, 2),
+            "inference_ms": round(pm.get_inference_duration().mean, 2),
+            "generate_ms": round(pm.get_generate_duration().mean, 2),
+            "detokenization_ms": round(pm.get_detokenization_duration().mean, 2),
+            "throughput_tokens_per_sec": round(pm.get_throughput().mean, 2),
+            "num_generated_tokens": pm.get_num_generated_tokens(),
+        }
+    except Exception:
+        return {}
+
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "model": model_manager.default_model})
+    return jsonify({"status": "ok", "model": model_manager.default_model, "engine": ENGINE, "device": DEVICE})
+
 
 @app.route("/models", methods=["GET"])
 def list_models():
     return jsonify({"models": model_manager.list_models()})
 
+
 @app.route("/model/default", methods=["GET"])
 def get_default_model():
     return jsonify({"model": model_manager.default_model})
+
 
 @app.route("/model/default", methods=["PUT"])
 def set_default_model():
@@ -181,30 +394,24 @@ def set_default_model():
     logger.info(f"Default model changed to: {model_name}")
     return jsonify({"model": model_name})
 
+
 @app.route("/transcribe/<model_name>", methods=["POST"])
 def transcribe_with_model(model_name):
     try:
-        pipeline = model_manager.load_model(model_name)
-        audio_data = request.get_data()
-        if not audio_data:
-            return jsonify({"error": "No audio data"}), 400
-        en_raw_speech, _ = librosa.load(io.BytesIO(audio_data), sr=16000)
-        t0 = time.time()
-        gen_kwargs = {}
+        audio_np = _load_audio(request)
         language = request.args.get("language")
-        if language:
-            gen_kwargs["language"] = f"<|{language}|>"
-        result = pipeline.generate(en_raw_speech, **gen_kwargs)
-        elapsed = time.time() - t0
-        duration = len(en_raw_speech) / 16000
+        text, perf, elapsed = model_manager.transcribe(model_name, audio_np, language)
+        duration = len(audio_np) / 16000
         logger.info(f"Transcribed {duration:.1f}s audio in {elapsed:.2f}s ({duration/elapsed:.1f}x realtime)")
-        perf = _extract_perf_metrics(result)
         metrics.record_transcription(elapsed, duration, perf)
-        return jsonify({"text": str(result)})
+        return jsonify({"text": text})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         metrics.record_error()
         return jsonify({"error": str(e)}), 500
+
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe():
@@ -220,79 +427,72 @@ def transcribe_stream():
 def transcribe_stream_with_model(model_name=None):
     model_name = model_name or model_manager.default_model
     try:
-        pipeline = model_manager.load_model(model_name)
-        audio_data = request.get_data()
-        if not audio_data:
-            return jsonify({"error": "No audio data"}), 400
-        en_raw_speech, _ = librosa.load(io.BytesIO(audio_data), sr=16000)
-        duration = len(en_raw_speech) / 16000
+        audio_np = _load_audio(request)
+        duration = len(audio_np) / 16000
         if duration > 30:
             return jsonify({"error": "Streaming requires audio < 30 seconds"}), 400
-
-        q = queue.Queue()
         language = request.args.get("language")
-
-        def streamer_callback(text_chunk):
-            q.put(text_chunk)
-            return 0
 
         def generate():
             t0 = time.time()
-            def run_inference():
-                try:
-                    gen_kwargs = {"streamer": streamer_callback, "return_timestamps": False}
-                    if language:
-                        gen_kwargs["language"] = f"<|{language}|>"
-                    pipeline.generate(en_raw_speech, **gen_kwargs)
-                except Exception as e:
-                    logger.error(f"Streaming error: {e}")
-                finally:
-                    q.put(None)
-
-            thread = threading.Thread(target=run_inference, daemon=True)
-            thread.start()
-
             full_text = []
-            while True:
-                chunk = q.get()
-                if chunk is None:
-                    break
+            for chunk in model_manager.transcribe_stream(model_name, audio_np, language):
                 full_text.append(chunk)
                 yield f"data: {json.dumps({'text': chunk})}\n\n"
-
             elapsed = time.time() - t0
             logger.info(f"Streamed {duration:.1f}s audio in {elapsed:.2f}s ({duration/elapsed:.1f}x realtime)")
             metrics.record_transcription(elapsed, duration)
             yield f"data: {json.dumps({'done': True, 'full_text': ''.join(full_text)})}\n\n"
 
         return Response(generate(), mimetype="text/event-stream")
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         logger.error(f"Error: {str(e)}")
         metrics.record_error()
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/transcribe/timestamps/<model_name>", methods=["POST"])
+def transcribe_timestamps_with_model(model_name):
+    try:
+        audio_np = _load_audio(request)
+        language = request.args.get("language")
+        t0 = time.time()
+        text, chunks, perf = model_manager.transcribe_timestamps(model_name, audio_np, language)
+        elapsed = time.time() - t0
+        duration = len(audio_np) / 16000
+        logger.info(f"Timestamped {duration:.1f}s audio in {elapsed:.2f}s ({len(chunks)} chunks)")
+        metrics.record_transcription(elapsed, duration, perf)
+        return jsonify({"text": text, "chunks": chunks, "duration": round(duration, 2), "latency": round(elapsed, 3)})
+    except Exception as e:
+        logger.error(f"Error: {str(e)}")
+        metrics.record_error()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/transcribe/timestamps", methods=["POST"])
+def transcribe_timestamps():
+    return transcribe_timestamps_with_model(model_manager.default_model)
+
 
 @app.route("/rewrite", methods=["POST"])
 def rewrite():
     data = request.get_json()
     if not data or "text" not in data:
         return jsonify({"error": "text field required"}), 400
-
     text = data["text"].strip()
     if not text:
         return jsonify({"error": "empty text"}), 400
-
     tones = data.get("tones", list(DEFAULT_TONES.keys()))
     custom_tones = data.get("custom_tones", {})
-
     tone_prompts = {}
     for tone in tones:
         if tone in custom_tones:
             tone_prompts[tone] = custom_tones[tone]
         elif tone in DEFAULT_TONES:
             tone_prompts[tone] = DEFAULT_TONES[tone]
-
     variants = [{"tone": "original", "text": text}]
-
     for tone_name, tone_prompt in tone_prompts.items():
         try:
             rewritten = llm_manager.rewrite(text, tone_name, tone_prompt)
@@ -300,7 +500,6 @@ def rewrite():
         except Exception as e:
             logger.error(f"Rewrite ({tone_name}) failed: {e}")
             variants.append({"tone": tone_name, "text": text, "error": str(e)})
-
     return jsonify({"variants": variants})
 
 
@@ -333,21 +532,6 @@ def list_tones():
 @app.route("/metrics", methods=["GET"])
 def get_metrics():
     return jsonify(metrics.snapshot())
-
-
-def _extract_perf_metrics(result):
-    try:
-        pm = result.perf_metrics
-        return {
-            "features_extraction_ms": round(pm.get_features_extraction_duration().mean, 2),
-            "inference_ms": round(pm.get_inference_duration().mean, 2),
-            "generate_ms": round(pm.get_generate_duration().mean, 2),
-            "detokenization_ms": round(pm.get_detokenization_duration().mean, 2),
-            "throughput_tokens_per_sec": round(pm.get_throughput().mean, 2),
-            "num_generated_tokens": pm.get_num_generated_tokens(),
-        }
-    except Exception:
-        return {}
 
 
 @app.route("/punctuate", methods=["POST"])
@@ -385,39 +569,6 @@ def translate():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/transcribe/timestamps/<model_name>", methods=["POST"])
-def transcribe_timestamps_with_model(model_name):
-    try:
-        pipeline = model_manager.load_model(model_name)
-        audio_data = request.get_data()
-        if not audio_data:
-            return jsonify({"error": "No audio data"}), 400
-        en_raw_speech, _ = librosa.load(io.BytesIO(audio_data), sr=16000)
-        t0 = time.time()
-        gen_kwargs = {"return_timestamps": True}
-        language = request.args.get("language")
-        if language:
-            gen_kwargs["language"] = f"<|{language}|>"
-        result = pipeline.generate(en_raw_speech, **gen_kwargs)
-        elapsed = time.time() - t0
-        duration = len(en_raw_speech) / 16000
-        chunks = []
-        for chunk in result.chunks:
-            chunks.append({"text": chunk.text, "start": round(chunk.start_ts, 3), "end": round(chunk.end_ts, 3)})
-        logger.info(f"Timestamped {duration:.1f}s audio in {elapsed:.2f}s ({len(chunks)} chunks)")
-        metrics.record_transcription(elapsed, duration, _extract_perf_metrics(result))
-        return jsonify({"text": str(result), "chunks": chunks, "duration": round(duration, 2), "latency": round(elapsed, 3)})
-    except Exception as e:
-        logger.error(f"Error: {str(e)}")
-        metrics.record_error()
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/transcribe/timestamps", methods=["POST"])
-def transcribe_timestamps():
-    return transcribe_timestamps_with_model(model_manager.default_model)
-
-
 @app.route("/history/export", methods=["GET"])
 def export_history():
     import sqlite3
@@ -444,7 +595,7 @@ def export_history():
         for i, (text, ts) in enumerate(rows, 1):
             dt = datetime.datetime.fromtimestamp(ts)
             start = dt.strftime("%H:%M:%S,000")
-            end_dt = dt + datetime.timedelta(seconds=max(3, len(text) * 0.05))
+            end_dt = dt + __import__("datetime").timedelta(seconds=max(3, len(text) * 0.05))
             end = end_dt.strftime("%H:%M:%S,000")
             lines.append(f"{i}\n{start} --> {end}\n{text}\n")
         return Response("\n".join(lines), mimetype="text/plain")

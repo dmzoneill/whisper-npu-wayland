@@ -15,9 +15,9 @@
     </key>
 
     <key name="device" type="s">
-      <default>'NPU'</default>
+      <default>'auto'</default>
       <summary>Inference device</summary>
-      <description>OpenVINO inference device: NPU, CPU, or GPU</description>
+      <description>Inference device: auto (detect best), NPU (Intel NPU), GPU (Intel GPU / ARC), CUDA (NVIDIA), CPU</description>
     </key>
 
     <key name="backend" type="s">

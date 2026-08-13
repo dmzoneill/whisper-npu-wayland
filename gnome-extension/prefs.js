@@ -60,9 +60,10 @@ export default class WhisperNpuPreferences extends ExtensionPreferences {
       title: 'Server Options'
     })
 
+    const DEVICE_OPTIONS = ['auto', 'NPU', 'GPU', 'CUDA', 'CPU']
     const deviceCombo = new Gtk.ComboBoxText({ valign: Gtk.Align.CENTER })
-    for (const d of ['NPU', 'CPU', 'GPU']) { deviceCombo.append_text(d) }
-    deviceCombo.set_active(['NPU', 'CPU', 'GPU'].indexOf(settings.get_string('device')))
+    for (const d of DEVICE_OPTIONS) { deviceCombo.append_text(d) }
+    deviceCombo.set_active(Math.max(0, DEVICE_OPTIONS.indexOf(settings.get_string('device'))))
     deviceCombo.connect('changed', () => {
       settings.set_string('device', deviceCombo.get_active_text())
     })

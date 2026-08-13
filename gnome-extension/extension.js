@@ -26,7 +26,7 @@ import {
   logDebug
 } from './utils.js'
 
-const DEVICES = ['NPU', 'CPU', 'GPU']
+const DEVICES = ['auto', 'NPU', 'GPU', 'CUDA', 'CPU']
 const BACKENDS = ['openvino', 'whisper-cpp']
 const HOTKEYS = [
   'KEY_RIGHTCTRL',

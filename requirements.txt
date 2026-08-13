@@ -1,7 +1,12 @@
-openvino==2025.4.0
-openvino-tokenizers==2025.4.0
-openvino-genai==2025.4.0.0
+# Base dependencies (always installed)
+# See requirements-openvino.txt and requirements-cuda.txt for hardware-specific packages.
+# Use 'make install-python' for hardware-detected install, or install manually:
+#   pip install -r requirements-base.txt -r requirements-openvino.txt  # Intel NPU/GPU/CPU
+#   pip install -r requirements-base.txt -r requirements-cuda.txt      # NVIDIA CUDA
 librosa>=0.10.2
 flask>=3.1.0
 aiohttp>=3.9.0
 evdev>=1.9.0
+openvino==2025.4.0
+openvino-tokenizers==2025.4.0
+openvino-genai==2025.4.0.0

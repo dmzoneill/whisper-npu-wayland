@@ -4,8 +4,9 @@ PROJECT_DIR  := $(CURDIR)
 SYSTEMD_DIR  := $(HOME)/.config/systemd/user
 PYTHON       := /usr/bin/python3
 
-WHISPER_DEVICE     ?= NPU
+WHISPER_DEVICE     ?= auto
 WHISPER_MODEL      ?= whisper-small.en-fp16-ov
+WHISPER_CT2_MODEL  ?= small.en
 WHISPER_CPP_PORT   ?= 5001
 WHISPER_CPP_DEVICE ?= NPU
 
@@ -42,8 +43,9 @@ help: ## Show available targets
 		awk 'BEGIN {FS = ":.*##"}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Variables (override with make VAR=value):"
-	@echo "  WHISPER_DEVICE       Device for server-native    [$(WHISPER_DEVICE)]"
-	@echo "  WHISPER_MODEL        Model for server-native     [$(WHISPER_MODEL)]"
+	@echo "  WHISPER_DEVICE       Device: auto|NPU|GPU|CUDA|CPU [$(WHISPER_DEVICE)]"
+	@echo "  WHISPER_MODEL        OpenVINO model name         [$(WHISPER_MODEL)]"
+	@echo "  WHISPER_CT2_MODEL    faster-whisper model name   [$(WHISPER_CT2_MODEL)]"
 	@echo "  WHISPER_CPP_DEVICE   Device for whisper.cpp      [$(WHISPER_CPP_DEVICE)]"
 	@echo "  WHISPER_CPP_PORT     Port for whisper.cpp        [$(WHISPER_CPP_PORT)]"
 
@@ -57,9 +59,43 @@ install: install-python install-system install-whisper-cpp install-permissions i
 # Python dependencies
 # ----------------------------------------------------------------------------
 
-install-python: ## Install Python packages
-	$(PYTHON) -m pip install --user -r requirements.txt
-	$(PYTHON) -m pip install --user aiohttp evdev
+install-python: ## Install Python packages (auto-detects NPU/GPU/CUDA hardware)
+	@echo "=== Hardware Detection ==="; \
+	HAS_INTEL=0; HAS_NPU=0; HAS_ARC=0; HAS_CUDA=0; \
+	if grep -qi "intel" /proc/cpuinfo 2>/dev/null || lspci 2>/dev/null | grep -qi "intel"; then \
+		HAS_INTEL=1; \
+	fi; \
+	if ls /dev/accel* 2>/dev/null | grep -q . || lspci 2>/dev/null | grep -qi "VPU\|NPU\|8087:"; then \
+		HAS_NPU=1; echo "  [x] Intel NPU detected"; \
+	fi; \
+	if lspci 2>/dev/null | grep -qi "intel.*DG\|intel.*arc\|intel.*battlemage\|intel.*alchemist"; then \
+		HAS_ARC=1; echo "  [x] Intel ARC GPU detected"; \
+	fi; \
+	if [ $$HAS_INTEL -eq 1 ] && [ $$HAS_NPU -eq 0 ] && [ $$HAS_ARC -eq 0 ]; then \
+		echo "  [x] Intel iGPU/CPU detected"; \
+	fi; \
+	if nvidia-smi -L 2>/dev/null | grep -q "GPU"; then \
+		HAS_CUDA=1; echo "  [x] NVIDIA CUDA GPU detected"; \
+	fi; \
+	if [ $$HAS_INTEL -eq 0 ] && [ $$HAS_CUDA -eq 0 ]; then \
+		echo "  [ ] No accelerator found — installing OpenVINO for CPU fallback"; \
+		HAS_INTEL=1; \
+	fi; \
+	echo ""; \
+	echo "=== Installing Base Packages ==="; \
+	$(PYTHON) -m pip install --user -r $(PROJECT_DIR)/requirements-base.txt; \
+	if [ $$HAS_INTEL -eq 1 ] || [ $$HAS_NPU -eq 1 ] || [ $$HAS_ARC -eq 1 ]; then \
+		echo ""; \
+		echo "=== Installing OpenVINO (NPU / Intel GPU / ARC / CPU) ==="; \
+		$(PYTHON) -m pip install --user -r $(PROJECT_DIR)/requirements-openvino.txt; \
+	fi; \
+	if [ $$HAS_CUDA -eq 1 ]; then \
+		echo ""; \
+		echo "=== Installing faster-whisper (CUDA) ==="; \
+		$(PYTHON) -m pip install --user -r $(PROJECT_DIR)/requirements-cuda.txt; \
+	fi; \
+	echo ""; \
+	echo "Done. Set WHISPER_DEVICE=auto (default) to let the server pick the best device."
 
 # ----------------------------------------------------------------------------
 # System packages
@@ -135,7 +171,7 @@ $(SYSTEMD_DIR)/whisper-server.service:
 	@mkdir -p $(SYSTEMD_DIR)
 	@printf '%s\n' \
 		'[Unit]' \
-		'Description=Whisper Speech-to-Text Server (OpenVINO GenAI)' \
+		'Description=Whisper Speech-to-Text Server' \
 		'After=basic.target' \
 		'' \
 		'[Service]' \
@@ -144,6 +180,7 @@ $(SYSTEMD_DIR)/whisper-server.service:
 		'ExecStart=$(PYTHON) $(PROJECT_DIR)/server-native.py' \
 		'Environment=WHISPER_DEVICE=$(WHISPER_DEVICE)' \
 		'Environment=WHISPER_MODEL=$(WHISPER_MODEL)' \
+		'Environment=WHISPER_CT2_MODEL=$(WHISPER_CT2_MODEL)' \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'' \
