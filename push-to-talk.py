@@ -639,8 +639,10 @@ def try_dbus_history_picker(history):
 
 
 def play_sound(sound_name):
-    """Play a freedesktop sound non-blocking."""
-    path = f"/usr/share/sounds/freedesktop/stereo/{sound_name}.oga"
+    """Play a sound non-blocking. Falls back to bundled sounds if system theme missing."""
+    system_path = f"/usr/share/sounds/freedesktop/stereo/{sound_name}.oga"
+    bundled_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds", f"{sound_name}.oga")
+    path = system_path if os.path.exists(system_path) else bundled_path
     if not os.path.exists(path):
         return
     for player in ("pw-play", "paplay"):
