@@ -602,6 +602,7 @@ const WhisperIndicator = GObject.registerClass(
     // -- Menu ---------------------------------------------------------------
 
     _buildMenu () {
+      logDebug('_buildMenu: start')
       // Status — always at top
       this._statusItem = new PopupMenu.PopupMenuItem(_('Status: Checking...'), { reactive: false })
       this._statusItem.label.add_style_class_name('whisper-status-label')
@@ -611,16 +612,25 @@ const WhisperIndicator = GObject.registerClass(
       // Settings submenu — device, hotkey, language etc. nested inside
       const settingsSection = new PopupMenu.PopupSubMenuMenuItem(_('Settings'))
       this._buildSettingsGroup(settingsSection)
+      settingsSection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Settings submenu open=${open} items=${settingsSection.menu._getMenuItems().length}`)
+      })
       this.menu.addMenuItem(settingsSection)
 
       // Features submenu — all toggles
       const featuresSection = new PopupMenu.PopupSubMenuMenuItem(_('Features'))
       this._buildFeaturesGroup(featuresSection)
+      featuresSection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Features submenu open=${open} items=${featuresSection.menu._getMenuItems().length}`)
+      })
       this.menu.addMenuItem(featuresSection)
 
       // Models submenu — STT, LLM, export
       const modelsSection = new PopupMenu.PopupSubMenuMenuItem(_('Models'))
       this._buildModelsGroup(modelsSection)
+      modelsSection.menu.connect('open-state-changed', (_m, open) => {
+        logDebug(`Models submenu open=${open} items=${modelsSection.menu._getMenuItems().length}`)
+      })
       this.menu.addMenuItem(modelsSection)
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
@@ -632,9 +642,12 @@ const WhisperIndicator = GObject.registerClass(
       const prefsItem = new PopupMenu.PopupMenuItem(_('Preferences...'))
       prefsItem.connect('activate', () => this._extension.openPreferences())
       this.menu.addMenuItem(prefsItem)
+
+      logDebug(`_buildMenu: done, top-level items=${this.menu._getMenuItems().length}`)
     }
 
     _buildSettingsGroup (section) {
+      logDebug('_buildSettingsGroup: start')
       this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
         _(`Device: ${this._settings.get_string('device')}`)
       )
@@ -730,9 +743,11 @@ const WhisperIndicator = GObject.registerClass(
         this._streamIntervalSection.menu.addMenuItem(item)
       }
       section.menu.addMenuItem(this._streamIntervalSection)
+      logDebug(`_buildSettingsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _buildFeaturesGroup (section) {
+      logDebug('_buildFeaturesGroup: start')
       this._buddyToggle = new PopupMenu.PopupSwitchMenuItem(
         _('Language Buddy'),
         this._settings.get_boolean('language-buddy-enabled')
@@ -808,9 +823,11 @@ const WhisperIndicator = GObject.registerClass(
         this._settings.set_boolean('mute-other-streams', state)
       })
       section.menu.addMenuItem(this._muteStreamsToggle)
+      logDebug(`_buildFeaturesGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _buildModelsGroup (section) {
+      logDebug('_buildModelsGroup: start')
       this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
       this._modelSection.menu.addMenuItem(
         new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
@@ -832,6 +849,7 @@ const WhisperIndicator = GObject.registerClass(
         this._exportSection.menu.addMenuItem(item)
       }
       section.menu.addMenuItem(this._exportSection)
+      logDebug(`_buildModelsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     // -- Radio groups -------------------------------------------------------
