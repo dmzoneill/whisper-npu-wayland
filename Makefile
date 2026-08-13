@@ -116,6 +116,13 @@ install-python: ## Install Python packages (auto-detects NPU/GPU/CUDA hardware)
 
 install-system: ## Install system packages via dnf (requires sudo)
 	sudo dnf install -y $(SYSTEM_PKGS)
+	@if nvidia-smi -L 2>/dev/null | grep -q "GPU"; then \
+		CUDA_MAJOR=$$(nvidia-smi 2>/dev/null | grep -oP 'CUDA( UMD)? Version: \K\d+' | head -1); \
+		echo "=== Installing CUDA system libraries (CUDA $${CUDA_MAJOR:-12}) ==="; \
+		sudo dnf install -y libcublas-$${CUDA_MAJOR:-12}-* 2>/dev/null || \
+		sudo dnf install -y libcublas-$${CUDA_MAJOR:-12} 2>/dev/null || \
+		echo "  [!] libcublas not found for CUDA $${CUDA_MAJOR} — transcription may fail"; \
+	fi
 	sudo mkdir -p /etc/systemd/system/ydotool.service.d
 	@printf '%s\n' \
 		'[Service]' \
@@ -140,7 +147,7 @@ install-system: ## Install system packages via dnf (requires sudo)
 # ----------------------------------------------------------------------------
 
 install-whisper-cpp: ## Build and install libwhisper.so from source
-	@if [ -f /usr/local/lib/libwhisper.so ]; then \
+	@if [ -f /usr/local/lib/libwhisper.so ] || [ -f /usr/local/lib64/libwhisper.so ]; then \
 		echo "libwhisper.so already installed"; \
 	else \
 		OPENVINO_CMAKE=$$($(PYTHON) -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'cmake'))" 2>/dev/null); \

@@ -26,7 +26,14 @@ logger = logging.getLogger(__name__)
 # ctypes bindings for libwhisper.so
 # ---------------------------------------------------------------------------
 
-_lib = ctypes.CDLL("/usr/local/lib/libwhisper.so")
+import ctypes.util as _ctutil
+_whisper_lib_path = (
+    _ctutil.find_library("whisper") or
+    next((p for p in ["/usr/local/lib64/libwhisper.so", "/usr/local/lib/libwhisper.so"] if os.path.exists(p)), None)
+)
+if _whisper_lib_path is None:
+    raise OSError("libwhisper.so not found — run: make install-whisper-cpp")
+_lib = ctypes.CDLL(_whisper_lib_path)
 
 WHISPER_SAMPLING_GREEDY = 0
 WHISPER_SAMPLING_BEAM_SEARCH = 1
