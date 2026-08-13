@@ -193,6 +193,20 @@ class WhisperCppModel:
 
         logger.info("Model loaded in %.1fs", time.time() - t0)
 
+        silence = (ctypes.c_float * 16000)()  # 1s of zeros
+        self.transcribe(silence)
+        logger.info("Warmup complete")
+
+        t = _threading.Thread(target=self._keepalive, daemon=True)
+        t.start()
+
+    def _keepalive(self, interval=60):
+        silence = (ctypes.c_float * 16000)()
+        while True:
+            time.sleep(interval)
+            with _inference_lock:
+                self.transcribe(silence)
+
     def transcribe(self, audio_f32):
         params = _lib.whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_realtime = False
