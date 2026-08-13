@@ -1,0 +1,24 @@
+FROM docker.io/library/fedora:41
+
+# GNOME Shell 47 — last release with X11 support; used for extension dev testing via Xephyr
+RUN dnf install -y \
+    gnome-shell \
+    dbus-daemon \
+    glib2 \
+    adwaita-icon-theme \
+    && dnf clean all \
+    && mkdir -p /run/user/0 /root/.local/share/glib-2.0/schemas \
+       /root/.local/share/gnome-shell/extensions \
+       /root/.config /root/.cache \
+    && chmod 700 /run/user/0
+
+ENV HOME=/root \
+    XDG_DATA_HOME=/root/.local/share \
+    XDG_CONFIG_HOME=/root/.config \
+    XDG_CACHE_HOME=/root/.cache \
+    XDG_RUNTIME_DIR=/run/user/0
+
+COPY entrypoint.test.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["dbus-run-session", "--", "/entrypoint.sh"]
