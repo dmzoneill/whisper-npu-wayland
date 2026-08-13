@@ -362,25 +362,28 @@ async def transcribe_stream(wav_bytes, port, type_delay_ms, language=None):
         url += f"?language={language}"
     typed_any = False
     timeout = aiohttp.ClientTimeout(total=30)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        async with session.post(url, data=wav_bytes) as resp:
-            if resp.status != 200:
-                log.warning("Stream endpoint returned %d, falling back to batch", resp.status)
-                return await transcribe_batch(wav_bytes, port)
-            async for line in resp.content:
-                line = line.decode("utf-8").strip()
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    data = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                if data.get("done"):
-                    break
-                chunk = data.get("text", "")
-                if chunk:
-                    type_text(chunk, delay_ms=type_delay_ms)
-                    typed_any = True
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, data=wav_bytes) as resp:
+                if resp.status != 200:
+                    log.warning("Stream endpoint returned %d, falling back to batch", resp.status)
+                    return await transcribe_batch(wav_bytes, port)
+                async for line in resp.content:
+                    line = line.decode("utf-8").strip()
+                    if not line.startswith("data: "):
+                        continue
+                    try:
+                        data = json.loads(line[6:])
+                    except json.JSONDecodeError:
+                        continue
+                    if data.get("done"):
+                        break
+                    chunk = data.get("text", "")
+                    if chunk:
+                        type_text(chunk, delay_ms=type_delay_ms)
+                        typed_any = True
+    except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
+        log.warning("Streaming transcription failed: %s", e)
     return typed_any
 
 
@@ -390,14 +393,18 @@ async def transcribe_batch(wav_bytes, port, language=None):
     url = f"http://127.0.0.1:{port}/transcribe"
     if language:
         url += f"?language={language}"
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, data=wav_bytes) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                return data.get("text", "").strip()
-            else:
-                log.error("Server returned %d", resp.status)
-                return ""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=wav_bytes) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get("text", "").strip()
+                else:
+                    log.error("Server returned %d", resp.status)
+                    return ""
+    except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
+        log.warning("Transcription request failed: %s", e)
+        return ""
 
 
 async def transcribe_chunk(wav_bytes, port, language=None):
