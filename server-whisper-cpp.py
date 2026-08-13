@@ -13,6 +13,7 @@ import ctypes
 import io
 import logging
 import os
+import threading as _threading
 import time
 
 import librosa
@@ -34,6 +35,16 @@ _whisper_lib_path = (
 if _whisper_lib_path is None:
     raise OSError("libwhisper.so not found — run: make install-whisper-cpp")
 _lib = ctypes.CDLL(_whisper_lib_path)
+
+# Probe version — whisper_version() added in v1.5.0; older builds lack it.
+try:
+    _lib.whisper_version.restype = ctypes.c_char_p
+    _lib.whisper_version.argtypes = []
+    _WHISPER_VERSION = _lib.whisper_version().decode()
+    logger.info("whisper.cpp version: %s", _WHISPER_VERSION)
+except AttributeError:
+    _WHISPER_VERSION = "unknown"
+    logger.warning("whisper_version() not exported — version unknown; struct layout unverifiable")
 
 WHISPER_SAMPLING_GREEDY = 0
 WHISPER_SAMPLING_BEAM_SEARCH = 1
@@ -154,15 +165,46 @@ _lib.whisper_free.restype = None
 _lib.whisper_free.argtypes = [ctypes.c_void_p]
 
 
+def _verify_struct_layout():
+    """Check WhisperFullParams layout matches the loaded libwhisper.so.
+
+    whisper_full_default_params() fills known constants. If our ctypes struct
+    misaligns any field before no_speech_thold, the value we read back will be
+    garbage. Fatal error on mismatch — silent misalignment is worse than a crash.
+    """
+    d = _lib.whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
+    checks = [
+        ("no_speech_thold", d.no_speech_thold, 0.6, 0.05),
+        ("entropy_thold",   d.entropy_thold,   2.4, 0.1),
+        ("temperature",     d.temperature,     0.0, 0.01),
+    ]
+    bad = [(name, got, exp) for name, got, exp, tol in checks if abs(got - exp) > tol]
+    if bad:
+        for name, got, exp in bad:
+            logger.error(
+                "WhisperFullParams struct mismatch: %s expected ~%.3f got %.3f",
+                name, exp, got,
+            )
+        raise RuntimeError(
+            "WhisperFullParams layout does not match libwhisper.so "
+            f"(version={_WHISPER_VERSION}). "
+            "Update the ctypes struct in server-whisper-cpp.py to match your whisper.cpp build."
+        )
+    logger.info("WhisperFullParams struct layout verified (version=%s)", _WHISPER_VERSION)
+
+
 # ---------------------------------------------------------------------------
 # Model management
 # ---------------------------------------------------------------------------
 
 class WhisperCppModel:
-    def __init__(self, model_path, device="NPU"):
+    def __init__(self, model_path, device="NPU", n_threads=None, language="en", no_speech_thold=0.6):
         self.ctx = None
         self.model_path = model_path
         self.device = device
+        self.n_threads = n_threads or max(1, (os.cpu_count() or 4) // 2)
+        self.language = language.encode()
+        self.no_speech_thold = no_speech_thold
         self._load()
 
     def _load(self):
@@ -193,8 +235,8 @@ class WhisperCppModel:
 
         logger.info("Model loaded in %.1fs", time.time() - t0)
 
-        silence = (ctypes.c_float * 16000)()  # 1s of zeros
-        self.transcribe(silence)
+        silence = (ctypes.c_float * 16000)()  # 1s of zeros — warmup
+        self.transcribe(silence, no_speech_thold=1.0)
         logger.info("Warmup complete")
 
         t = _threading.Thread(target=self._keepalive, daemon=True)
@@ -205,9 +247,9 @@ class WhisperCppModel:
         while True:
             time.sleep(interval)
             with _inference_lock:
-                self.transcribe(silence)
+                self.transcribe(silence, no_speech_thold=1.0)
 
-    def transcribe(self, audio_f32):
+    def transcribe(self, audio_f32, no_speech_thold=None):
         params = _lib.whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
         params.print_realtime = False
         params.print_progress = False
@@ -215,9 +257,9 @@ class WhisperCppModel:
         params.print_special = False
         params.no_timestamps = True
         params.single_segment = False
-        params.n_threads = 4
-        params.language = b"en"
-        params.no_speech_thold = 1.0  # disable no-speech suppression; user pressed PTT so trust there is speech
+        params.n_threads = self.n_threads
+        params.language = self.language
+        params.no_speech_thold = self.no_speech_thold if no_speech_thold is None else no_speech_thold
 
         arr = (ctypes.c_float * len(audio_f32))(*audio_f32)
         t0 = time.time()
@@ -248,8 +290,9 @@ class WhisperCppModel:
             _lib.whisper_free(self.ctx)
 
 
+_verify_struct_layout()
+
 model = None
-import threading as _threading
 _inference_lock = _threading.Lock()
 
 MAX_AUDIO_SECONDS = 30
@@ -304,11 +347,14 @@ def health():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Whisper.cpp streaming server")
     parser.add_argument("--port", type=int, default=5001)
-    parser.add_argument(
-        "--model",
-        default=os.path.expanduser("~/.cache/whisper/ggml-base.bin"),
-    )
+    parser.add_argument("--model", default=os.path.expanduser("~/.cache/whisper/ggml-base.bin"))
     parser.add_argument("--device", default="NPU", help="OpenVINO device (NPU, CPU, GPU)")
+    parser.add_argument("--threads", type=int, default=None, help="Inference threads (default: cpu_count/2)")
+    parser.add_argument("--language", default="en", help="Whisper language code (default: en)")
+    parser.add_argument(
+        "--no-speech-thold", type=float, default=0.6, dest="no_speech_thold",
+        help="no_speech probability threshold 0.0-1.0 (default: 0.6; set 1.0 to disable for PTT)",
+    )
     args = parser.parse_args()
 
     os.environ.setdefault(
@@ -316,5 +362,11 @@ if __name__ == "__main__":
         "/usr/local/lib/openvino:/usr/local/lib:/usr/local/lib64",
     )
 
-    model = WhisperCppModel(args.model, device=args.device)
+    model = WhisperCppModel(
+        args.model,
+        device=args.device,
+        n_threads=args.threads,
+        language=args.language,
+        no_speech_thold=args.no_speech_thold,
+    )
     app.run(host="0.0.0.0", port=args.port, threaded=True)
