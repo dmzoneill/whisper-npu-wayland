@@ -118,7 +118,7 @@ install-system: ## Install system packages via dnf (requires sudo)
 	@printf '%s\n' \
 		'[Service]' \
 		'RestartSec=3' \
-		"ExecStartPost=/bin/bash -c 'sleep 0.5 && for s in /tmp/.ydotool_socket /run/user/*/.ydotool_socket; do [ -S \"$$s\" ] && chmod 666 \"$$s\"; done'" \
+		'ExecStartPost=/bin/bash -c "sleep 0.5 && find /tmp /run/user -maxdepth 3 -name .ydotool_socket -exec chmod 666 {} + 2>/dev/null; true"' \
 		| sudo tee /etc/systemd/system/ydotool.service.d/socket-permissions.conf > /dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable ydotool.service
