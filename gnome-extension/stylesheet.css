@@ -1,3 +1,7 @@
+.whisper-option-unselected {
+  padding-left: 13px;
+}
+
 .whisper-status-label {
   font-style: italic;
 }

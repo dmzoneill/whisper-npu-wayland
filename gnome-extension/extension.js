@@ -601,84 +601,140 @@ const WhisperIndicator = GObject.registerClass(
 
     // -- Menu ---------------------------------------------------------------
 
+    _makeIconSubMenu (text, iconName) {
+      const item = new PopupMenu.PopupSubMenuMenuItem(text)
+      this._addIconToMenuItem(item, iconName)
+      return item
+    }
+
+    _setOptionSelected (item, selected) {
+      item.setOrnament(selected ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
+      if (selected)
+        item.remove_style_class_name('whisper-option-unselected')
+      else
+        item.add_style_class_name('whisper-option-unselected')
+    }
+
+    _addIconToMenuItem (item, iconName) {
+      const icon = new St.Icon({ icon_name: iconName, style_class: 'popup-menu-icon' })
+      item.insert_child_at_index(icon, 1)
+      return item
+    }
+
     _buildMenu () {
-      logDebug('_buildMenu: start')
       this._statusItem = new PopupMenu.PopupMenuItem(_('Status: Checking...'), { reactive: false })
       this._statusItem.label.add_style_class_name('whisper-status-label')
       this.menu.addMenuItem(this._statusItem)
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      const settingsSection = new PopupMenu.PopupSubMenuMenuItem(_('Settings'))
+      const settingsSection = this._makeIconSubMenu(_('Settings'), 'preferences-system-symbolic')
       this._buildSettingsGroup(settingsSection)
-      settingsSection.menu.connect('open-state-changed', (_m, open) => {
-        logDebug(`Settings submenu open=${open} items=${settingsSection.menu._getMenuItems().length}`)
-      })
       this.menu.addMenuItem(settingsSection)
 
-      const featuresSection = new PopupMenu.PopupSubMenuMenuItem(_('Features'))
+      const featuresSection = this._makeIconSubMenu(_('Features'), 'applications-utilities-symbolic')
       this._buildFeaturesGroup(featuresSection)
       this.menu.addMenuItem(featuresSection)
 
-      const modelsSection = new PopupMenu.PopupSubMenuMenuItem(_('Models'))
+      const modelsSection = this._makeIconSubMenu(_('Models'), 'drive-harddisk-symbolic')
       this._buildModelsGroup(modelsSection)
       this.menu.addMenuItem(modelsSection)
 
       this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
       this._restartServerItem = new PopupMenu.PopupMenuItem(_('Restart Server'))
+      this._addIconToMenuItem(this._restartServerItem, 'view-refresh-symbolic')
       this._restartServerItem.connect('activate', () => this._restartServer())
       this.menu.addMenuItem(this._restartServerItem)
 
       const prefsItem = new PopupMenu.PopupMenuItem(_('Preferences...'))
+      this._addIconToMenuItem(prefsItem, 'preferences-other-symbolic')
       prefsItem.connect('activate', () => this._extension.openPreferences())
       this.menu.addMenuItem(prefsItem)
 
-      logDebug(`_buildMenu: done, top-level items=${this.menu._getMenuItems().length}`)
+      // Fix for nested PopupSubMenuMenuItem: GNOME Shell's _setOpenedSubMenu has
+      // accordion behavior that closes the parent submenu (Settings) when a child
+      // submenu (Device etc.) opens, because it traverses to the top-level menu and
+      // treats all submenus as siblings. Override it to detect nesting and skip the
+      // accordion close when the new submenu is inside the currently open one.
+      if (typeof this.menu._setOpenedSubMenu === 'function') {
+        this.menu._lastNestedSubMenu = null
+        const orig = this.menu._setOpenedSubMenu.bind(this.menu)
+        this.menu._setOpenedSubMenu = (submenu) => {
+          if (submenu === null) {
+            if (this.menu._lastNestedSubMenu !== null) {
+              this.menu._lastNestedSubMenu = null
+              return
+            }
+            orig(null)
+            return
+          }
+          const currentlyOpen = this.menu._openedSubMenu
+          if (currentlyOpen && currentlyOpen !== submenu) {
+            const parentActor = currentlyOpen.actor
+            const childSource = submenu.sourceActor
+            if (parentActor && childSource && parentActor.contains(childSource)) {
+              if (this.menu._lastNestedSubMenu && this.menu._lastNestedSubMenu !== submenu)
+                this.menu._lastNestedSubMenu.close(true)
+              this.menu._lastNestedSubMenu = submenu
+              return
+            }
+          }
+          this.menu._lastNestedSubMenu = null
+          orig(submenu)
+        }
+      }
     }
 
     _buildSettingsGroup (section) {
-      this._deviceSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Device: ${this._settings.get_string('device')}`)
+      this._deviceSection = this._makeIconSubMenu(
+        _(`Device: ${this._settings.get_string('device')}`),
+        'computer-symbolic'
       )
-      this._buildRadioGroup(this._deviceSection, DEVICES, 'device')
+      this._buildRadioGroup(this._deviceSection, DEVICES, 'device', 'computer-symbolic')
       section.menu.addMenuItem(this._deviceSection)
 
-      this._backendSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Backend: ${this._settings.get_string('backend')}`)
+      this._backendSection = this._makeIconSubMenu(
+        _(`Backend: ${this._settings.get_string('backend')}`),
+        'network-server-symbolic'
       )
-      this._buildRadioGroup(this._backendSection, BACKENDS, 'backend')
+      this._buildRadioGroup(this._backendSection, BACKENDS, 'backend', 'network-server-symbolic')
       section.menu.addMenuItem(this._backendSection)
 
-      this._hotkeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`)
+      this._hotkeySection = this._makeIconSubMenu(
+        _(`Hotkey: ${this._formatHotkey(this._settings.get_string('hotkey'))}`),
+        'input-keyboard-symbolic'
       )
       this._buildHotkeyGroup(this._hotkeySection)
       section.menu.addMenuItem(this._hotkeySection)
 
-      this._recallKeySection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`)
+      this._recallKeySection = this._makeIconSubMenu(
+        _(`Recall Key: ${this._formatHotkey(this._settings.get_string('recall-key'))}`),
+        'appointment-soon-symbolic'
       )
       this._buildRecallKeyGroup(this._recallKeySection)
       section.menu.addMenuItem(this._recallKeySection)
 
       const currentLang = this._settings.get_string('language')
       const langLabel = LANGUAGES.find(l => l[1] === currentLang)
-      this._languageSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`)
+      this._languageSection = this._makeIconSubMenu(
+        _(`Language: ${langLabel ? langLabel[0] : 'Auto'}`),
+        'preferences-desktop-locale-symbolic'
       )
       this._buildLanguageGroup(this._languageSection)
       section.menu.addMenuItem(this._languageSection)
 
       const currentTranslate = this._settings.get_string('translate-to')
       const translateLabel = TRANSLATE_TARGETS.find(t => t[1] === currentTranslate)
-      this._translateSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Translate To: ${translateLabel ? translateLabel[0] : 'Disabled'}`)
+      this._translateSection = this._makeIconSubMenu(
+        _(`Translate To: ${translateLabel ? translateLabel[0] : 'Disabled'}`),
+        'edit-find-replace-symbolic'
       )
       this._buildTranslateGroup(this._translateSection)
       section.menu.addMenuItem(this._translateSection)
 
-      this._vadSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`VAD Threshold: ${this._settings.get_int('vad-threshold')} dB`)
+      this._vadSection = this._makeIconSubMenu(
+        _(`VAD Threshold: ${this._settings.get_int('vad-threshold')} dB`),
+        'audio-input-microphone-symbolic'
       )
       const vadOptions = [
         ['-20 dB (aggressive)', -20],
@@ -690,23 +746,24 @@ const WhisperIndicator = GObject.registerClass(
       const currentVad = this._settings.get_int('vad-threshold')
       for (const [label, value] of vadOptions) {
         const item = new PopupMenu.PopupMenuItem(label)
-        if (value === currentVad) item.setOrnament(PopupMenu.Ornament.DOT)
+        this._addIconToMenuItem(item, 'audio-input-microphone-symbolic')
+        this._setOptionSelected(item, value === currentVad)
         item.connect('activate', () => {
           this._settings.set_int('vad-threshold', value)
           this._vadSection.label.set_text(`VAD Threshold: ${value} dB`)
           const items = this._vadSection.menu._getMenuItems()
           for (const [i, mi] of items.entries()) {
-            if (mi.label && i < vadOptions.length) {
-              mi.setOrnament(vadOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
-            }
+            if (mi.label && i < vadOptions.length)
+              this._setOptionSelected(mi, vadOptions[i][1] === value)
           }
         })
         this._vadSection.menu.addMenuItem(item)
       }
       section.menu.addMenuItem(this._vadSection)
 
-      this._streamIntervalSection = new PopupMenu.PopupSubMenuMenuItem(
-        _(`Stream Interval: ${this._settings.get_double('stream-interval')}s`)
+      this._streamIntervalSection = this._makeIconSubMenu(
+        _(`Stream Interval: ${this._settings.get_double('stream-interval')}s`),
+        'media-playlist-repeat-symbolic'
       )
       const intervalOptions = [
         ['1.0s (fast)', 1.0],
@@ -718,33 +775,30 @@ const WhisperIndicator = GObject.registerClass(
       const currentInterval = this._settings.get_double('stream-interval')
       for (const [label, value] of intervalOptions) {
         const item = new PopupMenu.PopupMenuItem(label)
-        if (value === currentInterval) item.setOrnament(PopupMenu.Ornament.DOT)
+        this._addIconToMenuItem(item, 'media-playlist-repeat-symbolic')
+        this._setOptionSelected(item, value === currentInterval)
         item.connect('activate', () => {
           this._settings.set_double('stream-interval', value)
           this._streamIntervalSection.label.set_text(`Stream Interval: ${value}s`)
           const items = this._streamIntervalSection.menu._getMenuItems()
           for (const [i, mi] of items.entries()) {
-            if (mi.label && i < intervalOptions.length) {
-              mi.setOrnament(intervalOptions[i][1] === value ? PopupMenu.Ornament.DOT : PopupMenu.Ornament.NONE)
-            }
+            if (mi.label && i < intervalOptions.length)
+              this._setOptionSelected(mi, intervalOptions[i][1] === value)
           }
         })
         this._streamIntervalSection.menu.addMenuItem(item)
       }
       section.menu.addMenuItem(this._streamIntervalSection)
-
-      logDebug(`_buildSettingsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _buildModelsGroup (section) {
-      logDebug('_buildModelsGroup: start')
-      this._modelSection = new PopupMenu.PopupSubMenuMenuItem(_('Speech-to-Text Models'))
+      this._modelSection = this._makeIconSubMenu(_('Speech-to-Text Models'), 'audio-input-microphone-symbolic')
       this._modelSection.menu.addMenuItem(
         new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
       )
       section.menu.addMenuItem(this._modelSection)
 
-      this._llmModelSection = new PopupMenu.PopupSubMenuMenuItem(_('Language Buddy Models'))
+      this._llmModelSection = this._makeIconSubMenu(_('Language Buddy Models'), 'chat-message-new-symbolic')
       this._llmModelSection.menu.addMenuItem(
         new PopupMenu.PopupMenuItem(_('Loading...'), { reactive: false })
       )
@@ -752,105 +806,54 @@ const WhisperIndicator = GObject.registerClass(
 
       section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      this._exportSection = new PopupMenu.PopupSubMenuMenuItem(_('Export History'))
-      for (const [label, fmt] of [['JSON', 'json'], ['Markdown', 'markdown'], ['SRT (Subtitles)', 'srt']]) {
+      this._exportSection = this._makeIconSubMenu(_('Export History'), 'document-save-symbolic')
+      for (const [label, fmt, icon] of [
+        ['JSON', 'json', 'text-x-generic-symbolic'],
+        ['Markdown', 'markdown', 'text-x-generic-symbolic'],
+        ['SRT (Subtitles)', 'srt', 'media-optical-symbolic']
+      ]) {
         const item = new PopupMenu.PopupMenuItem(label)
+        this._addIconToMenuItem(item, icon)
         item.connect('activate', () => this._exportHistory(fmt))
         this._exportSection.menu.addMenuItem(item)
       }
       section.menu.addMenuItem(this._exportSection)
-      logDebug(`_buildModelsGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _buildFeaturesGroup (section) {
-      logDebug('_buildFeaturesGroup: start')
-      this._buddyToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Language Buddy'),
-        this._settings.get_boolean('language-buddy-enabled')
-      )
-      this._buddyToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('language-buddy-enabled', state)
-        logDebug(`Language Buddy ${state ? 'enabled' : 'disabled'}`)
-      })
-      section.menu.addMenuItem(this._buddyToggle)
+      const addToggle = (label, key, icon) => {
+        const toggle = new PopupMenu.PopupSwitchMenuItem(
+          _(label), this._settings.get_boolean(key)
+        )
+        this._addIconToMenuItem(toggle, icon)
+        toggle.connect('toggled', (_item, state) => {
+          this._settings.set_boolean(key, state)
+        })
+        section.menu.addMenuItem(toggle)
+        return toggle
+      }
 
-      this._bypassToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Buddy Bypass'),
-        this._settings.get_boolean('language-buddy-bypass')
-      )
-      this._bypassToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('language-buddy-bypass', state)
-        logDebug(`Language Buddy bypass ${state ? 'enabled' : 'disabled'}`)
-      })
-      section.menu.addMenuItem(this._bypassToggle)
+      this._buddyToggle = addToggle('Language Buddy', 'language-buddy-enabled', 'chat-message-new-symbolic')
+      this._bypassToggle = addToggle('Buddy Bypass', 'language-buddy-bypass', 'media-skip-forward-symbolic')
 
       section.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem())
 
-      this._voiceCommandsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Voice Commands'),
-        this._settings.get_boolean('voice-commands-enabled')
-      )
-      this._voiceCommandsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('voice-commands-enabled', state)
-      })
-      section.menu.addMenuItem(this._voiceCommandsToggle)
-
-      this._notificationsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Notifications'),
-        this._settings.get_boolean('notifications-enabled')
-      )
-      this._notificationsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('notifications-enabled', state)
-      })
-      section.menu.addMenuItem(this._notificationsToggle)
-
-      this._autoPunctuateToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Auto-Punctuate'),
-        this._settings.get_boolean('auto-punctuate')
-      )
-      this._autoPunctuateToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('auto-punctuate', state)
-      })
-      section.menu.addMenuItem(this._autoPunctuateToggle)
-
-      this._audioFeedbackToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Audio Feedback'),
-        this._settings.get_boolean('audio-feedback-enabled')
-      )
-      this._audioFeedbackToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('audio-feedback-enabled', state)
-      })
-      section.menu.addMenuItem(this._audioFeedbackToggle)
-
-      this._formattingToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Dictation Formatting'),
-        this._settings.get_boolean('dictation-formatting-enabled')
-      )
-      this._formattingToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('dictation-formatting-enabled', state)
-      })
-      section.menu.addMenuItem(this._formattingToggle)
-
-      this._muteStreamsToggle = new PopupMenu.PopupSwitchMenuItem(
-        _('Mute Other Streams'),
-        this._settings.get_boolean('mute-other-streams')
-      )
-      this._muteStreamsToggle.connect('toggled', (_item, state) => {
-        this._settings.set_boolean('mute-other-streams', state)
-      })
-      section.menu.addMenuItem(this._muteStreamsToggle)
-      logDebug(`_buildFeaturesGroup: done, items=${section.menu._getMenuItems().length}`)
+      this._voiceCommandsToggle = addToggle('Voice Commands', 'voice-commands-enabled', 'audio-input-microphone-symbolic')
+      this._notificationsToggle = addToggle('Notifications', 'notifications-enabled', 'dialog-information-symbolic')
+      this._autoPunctuateToggle = addToggle('Auto-Punctuate', 'auto-punctuate', 'document-edit-symbolic')
+      this._audioFeedbackToggle = addToggle('Audio Feedback', 'audio-feedback-enabled', 'audio-volume-high-symbolic')
+      this._formattingToggle = addToggle('Dictation Formatting', 'dictation-formatting-enabled', 'format-indent-more-symbolic')
+      this._muteStreamsToggle = addToggle('Mute Other Streams', 'mute-other-streams', 'audio-volume-muted-symbolic')
     }
 
     // -- Radio groups -------------------------------------------------------
 
-    _buildRadioGroup (section, options, settingKey) {
+    _buildRadioGroup (section, options, settingKey, iconName) {
       const current = this._settings.get_string(settingKey)
       for (const option of options) {
         const item = new PopupMenu.PopupMenuItem(option)
-        if (option === current) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
-        }
+        if (iconName) this._addIconToMenuItem(item, iconName)
+        this._setOptionSelected(item, option === current)
         item.connect('activate', () => {
           this._settings.set_string(settingKey, option)
           section.label.set_text(`${settingKey.charAt(0).toUpperCase() + settingKey.slice(1)}: ${option}`)
@@ -864,9 +867,8 @@ const WhisperIndicator = GObject.registerClass(
       const current = this._settings.get_string('language')
       for (const [label, code] of LANGUAGES) {
         const item = new PopupMenu.PopupMenuItem(label)
-        if (code === current) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
-        }
+        this._addIconToMenuItem(item, 'preferences-desktop-locale-symbolic')
+        this._setOptionSelected(item, code === current)
         item.connect('activate', () => {
           this._settings.set_string('language', code)
           section.label.set_text(`Language: ${label}`)
@@ -879,13 +881,8 @@ const WhisperIndicator = GObject.registerClass(
     _updateLanguageOrnaments (section, selectedCode) {
       const items = section.menu._getMenuItems()
       for (const [i, item] of items.entries()) {
-        if (item.label && i < LANGUAGES.length) {
-          item.setOrnament(
-            LANGUAGES[i][1] === selectedCode
-              ? PopupMenu.Ornament.DOT
-              : PopupMenu.Ornament.NONE
-          )
-        }
+        if (item.label && i < LANGUAGES.length)
+          this._setOptionSelected(item, LANGUAGES[i][1] === selectedCode)
       }
     }
 
@@ -893,21 +890,15 @@ const WhisperIndicator = GObject.registerClass(
       const current = this._settings.get_string('translate-to')
       for (const [label, value] of TRANSLATE_TARGETS) {
         const item = new PopupMenu.PopupMenuItem(label)
-        if (value === current) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
-        }
+        this._addIconToMenuItem(item, 'edit-find-replace-symbolic')
+        this._setOptionSelected(item, value === current)
         item.connect('activate', () => {
           this._settings.set_string('translate-to', value)
           section.label.set_text(`Translate To: ${label}`)
           const items = section.menu._getMenuItems()
           for (const [i, menuItem] of items.entries()) {
-            if (menuItem.label && i < TRANSLATE_TARGETS.length) {
-              menuItem.setOrnament(
-                TRANSLATE_TARGETS[i][1] === value
-                  ? PopupMenu.Ornament.DOT
-                  : PopupMenu.Ornament.NONE
-              )
-            }
+            if (menuItem.label && i < TRANSLATE_TARGETS.length)
+              this._setOptionSelected(menuItem, TRANSLATE_TARGETS[i][1] === value)
           }
         })
         section.menu.addMenuItem(item)
@@ -938,21 +929,15 @@ const WhisperIndicator = GObject.registerClass(
       for (const key of HOTKEYS) {
         const label = this._formatHotkey(key)
         const item = new PopupMenu.PopupMenuItem(label)
-        if (key === current) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
-        }
+        this._addIconToMenuItem(item, 'input-keyboard-symbolic')
+        this._setOptionSelected(item, key === current)
         item.connect('activate', () => {
           this._settings.set_string('recall-key', key)
           section.label.set_text(`Recall Key: ${label}`)
           const items = section.menu._getMenuItems()
           for (const [i, menuItem] of items.entries()) {
-            if (menuItem.label) {
-              menuItem.setOrnament(
-                HOTKEYS[i] === key
-                  ? PopupMenu.Ornament.DOT
-                  : PopupMenu.Ornament.NONE
-              )
-            }
+            if (menuItem.label)
+              this._setOptionSelected(menuItem, HOTKEYS[i] === key)
           }
         })
         section.menu.addMenuItem(item)
@@ -961,13 +946,11 @@ const WhisperIndicator = GObject.registerClass(
 
     _buildHotkeyGroup (section) {
       const current = this._settings.get_string('hotkey')
-      logDebug(`_buildHotkeyGroup: ${HOTKEYS.length} keys, current=${current}`)
       for (const key of HOTKEYS) {
         const label = this._formatHotkey(key)
         const item = new PopupMenu.PopupMenuItem(label)
-        if (key === current) {
-          item.setOrnament(PopupMenu.Ornament.DOT)
-        }
+        this._addIconToMenuItem(item, 'input-keyboard-symbolic')
+        this._setOptionSelected(item, key === current)
         item.connect('activate', () => {
           this._settings.set_string('hotkey', key)
           section.label.set_text(`Hotkey: ${label}`)
@@ -975,32 +958,21 @@ const WhisperIndicator = GObject.registerClass(
         })
         section.menu.addMenuItem(item)
       }
-      logDebug(`_buildHotkeyGroup: done, items=${section.menu._getMenuItems().length}`)
     }
 
     _updateRadioOrnaments (section, selected) {
       const items = section.menu._getMenuItems()
       for (const item of items) {
-        if (item.label) {
-          item.setOrnament(
-            item.label.get_text() === selected
-              ? PopupMenu.Ornament.DOT
-              : PopupMenu.Ornament.NONE
-          )
-        }
+        if (item.label)
+          this._setOptionSelected(item, item.label.get_text() === selected)
       }
     }
 
     _updateHotkeyOrnaments (section, selectedKey) {
       const items = section.menu._getMenuItems()
       for (const [i, item] of items.entries()) {
-        if (item.label) {
-          item.setOrnament(
-            HOTKEYS[i] === selectedKey
-              ? PopupMenu.Ornament.DOT
-              : PopupMenu.Ornament.NONE
-          )
-        }
+        if (item.label)
+          this._setOptionSelected(item, HOTKEYS[i] === selectedKey)
       }
     }
 
