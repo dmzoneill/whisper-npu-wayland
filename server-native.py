@@ -613,18 +613,14 @@ def export_history():
         return jsonify({"error": f"Unknown format: {fmt}. Use json, markdown, or srt"}), 400
 
 
-import multiprocessing as _mp
-
 model_manager = ModelManager()
-if _mp.current_process().name == 'MainProcess':
-    model_manager.load_model(model_manager.default_model)
-
 llm_manager = LLMManager()
-if _mp.current_process().name == 'MainProcess' and LLM_MODEL:
-    try:
-        llm_manager.load_model()
-    except Exception as e:
-        logger.warning(f"LLM model not loaded: {e}")
 
 if __name__ == "__main__":
+    model_manager.load_model(model_manager.default_model)
+    if LLM_MODEL:
+        try:
+            llm_manager.load_model()
+        except Exception as e:
+            logger.warning(f"LLM model not loaded: {e}")
     app.run(host="0.0.0.0", port=5000)
