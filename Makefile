@@ -238,16 +238,23 @@ $(SYSTEMD_DIR)/whisper-cpp-server.service:
 	@mkdir -p $(SYSTEMD_DIR)
 	@OPENVINO_LIBS=$$($(PYTHON) -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'libs'))" 2>/dev/null || echo ""); \
 	LD_PATH="$${OPENVINO_LIBS:+$${OPENVINO_LIBS}:}/usr/local/lib64:/usr/local/lib"; \
+	CPP_DEVICE="$(WHISPER_CPP_DEVICE)"; \
+	if [ "$$CPP_DEVICE" = "NPU" ]; then \
+		if ! ls /dev/accel* 2>/dev/null | grep -q . && ! lspci 2>/dev/null | grep -qi "VPU\|NPU\|8087:"; then \
+			echo "  [!] NPU not detected — whisper-cpp will use CPU"; \
+			CPP_DEVICE="CPU"; \
+		fi; \
+	fi; \
 	printf '%s\n' \
 		'[Unit]' \
-		'Description=Whisper.cpp Speech-to-Text Server (NPU)' \
+		'Description=Whisper.cpp Speech-to-Text Server (NPU/CPU)' \
 		'After=basic.target' \
 		'' \
 		'[Service]' \
 		'Type=simple' \
 		"WorkingDirectory=$(PROJECT_DIR)" \
 		"Environment=LD_LIBRARY_PATH=$$LD_PATH" \
-		"ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --device $(WHISPER_CPP_DEVICE)" \
+		"ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --model $(WHISPER_CPP_MODELS_DIR)/$(WHISPER_CPP_MODEL) --device $$CPP_DEVICE" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'' \
