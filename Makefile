@@ -10,7 +10,11 @@ WHISPER_CT2_MODEL  ?= small.en
 WHISPER_CPP_PORT   ?= 5001
 WHISPER_CPP_DEVICE ?= NPU
 
-SYSTEM_PKGS := ydotool pipewire-pulseaudio wtype wl-clipboard xdotool git-lfs cmake gcc-c++
+SYSTEM_PKGS := ydotool pipewire-pulseaudio pipewire-utils pulseaudio-utils \
+               wtype wl-clipboard xdotool \
+               git git-lfs curl \
+               cmake gcc-c++ \
+               pciutils libnotify
 
 WHISPER_CPP_VERSION ?= v1.7.4
 WHISPER_CPP_SRC     := $(PROJECT_DIR)/.whisper-cpp
