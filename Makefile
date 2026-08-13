@@ -147,6 +147,7 @@ install-whisper-cpp: ## Build and install libwhisper.so from source
 			exit 1; \
 		fi; \
 		echo "Building whisper.cpp $(WHISPER_CPP_VERSION) (OpenVINO: $$OPENVINO_CMAKE)..."; \
+		rm -rf $(WHISPER_CPP_SRC); \
 		git clone --depth 1 --branch $(WHISPER_CPP_VERSION) https://github.com/ggerganov/whisper.cpp.git $(WHISPER_CPP_SRC) && \
 		cmake -B $(WHISPER_CPP_SRC)/build -S $(WHISPER_CPP_SRC) \
 			-DCMAKE_BUILD_TYPE=Release \
