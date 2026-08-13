@@ -31,7 +31,7 @@ HF_ORG := OpenVINO
         stop restart status logs logs-server logs-cpp logs-ptt \
         test uninstall clean \
         extension extension-install extension-uninstall extension-enable \
-        extension-disable extension-reload extension-dev extension-logs
+        extension-disable extension-reload extension-dev extension-shell extension-logs
 
 .DEFAULT_GOAL := help
 
@@ -376,8 +376,9 @@ extension-enable: ## Enable GNOME extension
 extension-disable: ## Disable GNOME extension
 	-gnome-extensions disable $(EXTENSION_UUID)
 
-extension-reload: extension-disable extension-enable ## Reload GNOME extension
-	@echo "Extension reloaded (JS/CSS changes may require logout/login on Wayland)"
+extension-reload: extension-install ## Reload GNOME extension in the running session (no logout needed)
+	gnome-extensions disable $(EXTENSION_UUID) && sleep 1 && gnome-extensions enable $(EXTENSION_UUID)
+	@echo "Extension reloaded."
 
 extension-dev: extension-install extension-enable ## Install and enable GNOME extension for development
 	@echo ""
@@ -386,8 +387,16 @@ extension-dev: extension-install extension-enable ## Install and enable GNOME ex
 	@echo "========================================"
 	@echo ""
 	@echo "Watch logs: make extension-logs"
+	@echo "Nested shell: make extension-shell"
 	@echo ""
-	@echo "Note: JS/CSS changes require logout/login on Wayland."
+	@echo "Note: JS/CSS changes require logout/login on Wayland (or use make extension-shell)."
+
+extension-shell: extension-install ## Launch nested GNOME Shell window for live extension testing (no logout needed)
+	@rm -f /run/user/$$(id -u)/gnome-shell-disable-extensions
+	dbus-run-session -- bash -c '\
+		rm -f /run/user/$$(id -u)/gnome-shell-disable-extensions; \
+		gsettings set org.gnome.shell enabled-extensions "[\"$(EXTENSION_UUID)\"]"; \
+		exec gnome-shell --wayland --no-x11 --devkit --virtual-monitor 1280x800'
 
 extension-logs: ## Show GNOME Shell logs (for extension debugging)
 	journalctl -f -o cat /usr/bin/gnome-shell
