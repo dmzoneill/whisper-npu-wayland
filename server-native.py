@@ -199,6 +199,8 @@ class ModelManager:
                 device=cuda_device,
                 device_index=cuda_index,
                 compute_type=compute_type,
+                num_workers=1,
+                cpu_threads=1,
             )
 
         elapsed = time.time() - t0
