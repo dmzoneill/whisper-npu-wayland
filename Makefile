@@ -348,10 +348,10 @@ EXTENSION_UUID    := whisper-npu@dmz.oneill
 EXTENSION_INSTALL := $(HOME)/.local/share/gnome-shell/extensions/$(EXTENSION_UUID)
 SCHEMA_DIR        := $(HOME)/.local/share/glib-2.0/schemas
 
-# Dev test container (Fedora 41 / GNOME Shell 47 — last release with X11, runs in Xephyr)
+# Dev test container (Fedora 44 / GNOME Shell 50 — same as host; devkit window on host Wayland desktop)
 EXTENSION_TEST_IMAGE     := whisper-npu-gnome-test
 EXTENSION_TEST_CONTAINER := whisper-npu-test
-EXTENSION_TEST_DISPLAY   := :20
+WAYLAND_SOCK             := $(shell ls /run/user/$(shell id -u)/wayland-0 2>/dev/null || echo /run/user/$(shell id -u)/wayland-1)
 
 extension-install: ## Install GNOME extension (symlink + schemas + pre-enable)
 	mkdir -p $(SCHEMA_DIR)
@@ -410,46 +410,45 @@ extension-logs: ## Show GNOME Shell logs (for extension debugging)
 	journalctl -f -o cat /usr/bin/gnome-shell
 
 # ----------------------------------------------------------------------------
-# Extension dev container (GNOME Shell 47 / Fedora 41 in Xephyr — hot-reload without logout)
+# Extension dev container (Fedora 44 / GNOME Shell 50 — matches host exactly)
+# gnome-shell runs in devkit mode inside container; mutter-devkit GTK window appears
+# on the host Wayland desktop via the forwarded Wayland socket.
 # Usage:
-#   make extension-test-build   # once — builds container image (~5 min, ~800MB)
-#   make extension-test-start   # opens Xephyr window showing full GNOME 47 desktop
+#   make extension-test-build   # once — builds container image (~5-10 min)
+#   make extension-test-start   # devkit window opens on host desktop
 #   <edit extension.js>
-#   make extension-test-reload  # restarts GNOME Shell in container in ~2s
+#   make extension-test-reload  # podman restart = full JS reload in ~3s
 #   make extension-test-stop    # clean up
 # ----------------------------------------------------------------------------
 
-extension-test-build: ## Build GNOME 47 test container image (Fedora 41, one-time ~5 min)
+extension-test-build: ## Build GNOME 50 test container image (Fedora 44, one-time ~10 min)
 	podman build \
 		--tag $(EXTENSION_TEST_IMAGE) \
 		--file $(EXTENSION_DIR)/Containerfile.test \
 		$(EXTENSION_DIR)
 	@echo "Test image built: $(EXTENSION_TEST_IMAGE)"
 
-extension-test-start: extension-install ## Start GNOME Shell 47 in Xephyr — hot-reload dev env (no logout)
-	@pkill Xephyr 2>/dev/null || true
+extension-test-start: extension-install ## Start GNOME Shell 50 devkit on host desktop (no logout needed)
 	@podman rm -f $(EXTENSION_TEST_CONTAINER) 2>/dev/null || true
-	Xephyr $(EXTENSION_TEST_DISPLAY) -screen 1920x1080 -ac &
-	@sleep 1
 	podman run \
 		--detach \
 		--name $(EXTENSION_TEST_CONTAINER) \
-		--volume /tmp/.X11-unix:/tmp/.X11-unix:rw,z \
-		--env DISPLAY=$(EXTENSION_TEST_DISPLAY) \
+		--volume $(WAYLAND_SOCK):/run/user/0/wayland-0:rw,z \
+		--env WAYLAND_DISPLAY=wayland-0 \
+		--env XDG_RUNTIME_DIR=/run/user/0 \
 		--volume $(EXTENSION_DIR):/root/.local/share/gnome-shell/extensions/$(EXTENSION_UUID):ro,z \
 		$(EXTENSION_TEST_IMAGE)
-	@echo "GNOME Shell 47 running in Xephyr window (display $(EXTENSION_TEST_DISPLAY))"
+	@echo "GNOME Shell 50 (devkit) starting — mutter-devkit window will appear on host desktop."
 	@echo "  Logs:   make extension-test-logs"
 	@echo "  Reload: make extension-test-reload  (after editing JS)"
 	@echo "  Stop:   make extension-test-stop"
 
-extension-test-reload: ## Hot-reload JS: restarts GNOME Shell test container from disk (~2s)
+extension-test-reload: ## Hot-reload JS: restarts GNOME Shell test container from disk (~3s)
 	podman restart $(EXTENSION_TEST_CONTAINER)
 	@echo "GNOME Shell restarted in container — JS reloaded from disk."
 
-extension-test-stop: ## Stop GNOME Shell test container and Xephyr
+extension-test-stop: ## Stop GNOME Shell test container
 	-podman rm -f $(EXTENSION_TEST_CONTAINER) 2>/dev/null
-	-pkill Xephyr 2>/dev/null
 	@echo "Test environment stopped."
 
 extension-test-logs: ## Live logs from GNOME Shell test container

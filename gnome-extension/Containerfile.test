@@ -1,6 +1,8 @@
-FROM docker.io/library/fedora:41
+FROM docker.io/library/fedora:44
 
-# GNOME Shell 47 — last release with X11 support; used for extension dev testing via Xephyr
+# Same GNOME Shell version as host (GNOME 50, Wayland-only)
+# Runs gnome-shell --wayland --devkit; mutter-devkit window displays on host Wayland desktop
+# via mounted host Wayland socket.
 RUN dnf install -y \
     gnome-shell \
     dbus-daemon \
