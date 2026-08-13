@@ -83,30 +83,32 @@ ENGINE, DEVICE = _detect_engine_and_device()
 logger.info(f"Engine: {ENGINE}  Device: {DEVICE}")
 
 _openvino_genai = None
-if ENGINE == "openvino":
-    try:
-        import openvino_genai
-        _openvino_genai = openvino_genai
-    except ImportError:
-        logger.error("OpenVINO engine selected but openvino-genai not installed")
-        raise
-
 _faster_whisper_cls = None
-if ENGINE == "faster-whisper":
-    try:
-        from faster_whisper import WhisperModel as _WhisperModel
-        _faster_whisper_cls = _WhisperModel
-    except ImportError:
-        logger.error("faster-whisper engine selected but faster-whisper not installed")
-        raise
-
 LLM_DEVICE = os.environ.get("WHISPER_LLM_DEVICE", DEVICE if ENGINE == "openvino" else "CPU")
 _openvino_genai_for_llm = None
-try:
-    import openvino_genai as _ov_genai_llm
-    _openvino_genai_for_llm = _ov_genai_llm
-except ImportError:
-    pass
+
+if __name__ == "__main__":
+    if ENGINE == "openvino":
+        try:
+            import openvino_genai
+            _openvino_genai = openvino_genai
+        except ImportError:
+            logger.error("OpenVINO engine selected but openvino-genai not installed")
+            raise
+
+    if ENGINE == "faster-whisper":
+        try:
+            from faster_whisper import WhisperModel as _WhisperModel
+            _faster_whisper_cls = _WhisperModel
+        except ImportError:
+            logger.error("faster-whisper engine selected but faster-whisper not installed")
+            raise
+
+    try:
+        import openvino_genai as _ov_genai_llm
+        _openvino_genai_for_llm = _ov_genai_llm
+    except ImportError:
+        pass
 
 
 class MetricsCollector:
