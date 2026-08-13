@@ -141,12 +141,17 @@ install-whisper-cpp: ## Build and install libwhisper.so from source
 	@if [ -f /usr/local/lib/libwhisper.so ]; then \
 		echo "libwhisper.so already installed"; \
 	else \
-		echo "Building whisper.cpp $(WHISPER_CPP_VERSION)..."; \
+		OPENVINO_CMAKE=$$($(PYTHON) -c "import openvino, os; print(os.path.join(os.path.dirname(openvino.__file__), 'cmake'))" 2>/dev/null); \
+		if [ -z "$$OPENVINO_CMAKE" ] || [ ! -f "$$OPENVINO_CMAKE/OpenVINOConfig.cmake" ]; then \
+			echo "Error: OpenVINO cmake config not found — run make install-python first"; \
+			exit 1; \
+		fi; \
+		echo "Building whisper.cpp $(WHISPER_CPP_VERSION) (OpenVINO: $$OPENVINO_CMAKE)..."; \
 		git clone --depth 1 --branch $(WHISPER_CPP_VERSION) https://github.com/ggerganov/whisper.cpp.git $(WHISPER_CPP_SRC) && \
 		cmake -B $(WHISPER_CPP_SRC)/build -S $(WHISPER_CPP_SRC) \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DWHISPER_OPENVINO=ON \
-			-DOpenVINO_DIR=/usr/local/lib64/python3.14/site-packages/openvino/cmake && \
+			-DOpenVINO_DIR="$$OPENVINO_CMAKE" && \
 		cmake --build $(WHISPER_CPP_SRC)/build --config Release -j$$(nproc) && \
 		sudo cmake --install $(WHISPER_CPP_SRC)/build && \
 		sudo ldconfig && \
