@@ -178,18 +178,26 @@ class ModelManager:
             self.pipelines[model_name] = _openvino_genai.WhisperPipeline(str(model_path), device=DEVICE)
         else:
             assert _faster_whisper_cls is not None
-            compute_type = "float16" if DEVICE.startswith("cuda") else "int8"
             cuda_index = int(DEVICE.split(":")[1]) if ":" in DEVICE else 0
             cuda_device = DEVICE.split(":")[0]
-            logger.info(f"Loading {model_name} on {DEVICE} (faster-whisper, compute={compute_type})")
             local_path = os.path.join(self.ct2_models_dir, model_name)
             source = local_path if os.path.isdir(local_path) else model_name
-            self.pipelines[model_name] = _faster_whisper_cls(
-                source,
-                device=cuda_device,
-                device_index=cuda_index,
-                compute_type=compute_type,
-            )
+            # Try compute types from best to most compatible — older GPUs may not support float16
+            compute_types = ["float16", "int8_float16", "int8"] if cuda_device == "cuda" else ["int8"]
+            for compute_type in compute_types:
+                try:
+                    logger.info(f"Loading {model_name} on {DEVICE} (faster-whisper, compute={compute_type})")
+                    self.pipelines[model_name] = _faster_whisper_cls(
+                        source,
+                        device=cuda_device,
+                        device_index=cuda_index,
+                        compute_type=compute_type,
+                    )
+                    break
+                except (ValueError, RuntimeError) as e:
+                    logger.warning(f"compute_type={compute_type} not supported: {e}")
+                    if compute_type == compute_types[-1]:
+                        raise
 
         elapsed = time.time() - t0
         logger.info(f"Model loaded in {elapsed:.1f}s")
