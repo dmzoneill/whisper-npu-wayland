@@ -171,7 +171,9 @@ install-models: ## Download default OpenVINO model if not already present
 # Systemd services
 # ----------------------------------------------------------------------------
 
-install-services: $(SERVICE_FILES) ## Install systemd user service files
+install-services: ## Install systemd user service files (always regenerates)
+	@rm -f $(SERVICE_FILES)
+	@$(MAKE) $(SERVICE_FILES)
 	systemctl --user daemon-reload
 
 $(SYSTEMD_DIR)/whisper-server.service:
