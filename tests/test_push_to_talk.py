@@ -13,6 +13,7 @@ import wave
 from unittest.mock import (
     AsyncMock,
     MagicMock,
+    call,
     patch,
 )
 
@@ -142,13 +143,14 @@ class TestConstants:
         assert ptt.DBUS_INTERFACE == 'com.whisper.LanguageBuddy'
 
 
-# ── find_keyboard() ─────────────────────────────────────────────────────────
+# ── find_keyboards() ─────────────────────────────────────────────────────────
 
-class TestFindKeyboard:
+class TestFindKeyboards:
 
     def test_finds_keyboard_with_key_a_and_enter(self):
         dev = MagicMock()
         dev.name = "AT Translated Set 2 keyboard"
+        dev.path = "/dev/input/event0"
         dev.capabilities.return_value = {
             ("EV_KEY", 1): [("KEY_A",), ("KEY_ENTER",), ("KEY_B",)],
         }
@@ -156,14 +158,16 @@ class TestFindKeyboard:
         mock_evdev.list_devices.return_value = ["/dev/input/event0"]
         mock_evdev.InputDevice.return_value = dev
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is dev
+            result = ptt.find_keyboards()
+        assert dev in result
 
     def test_skips_virtual_device(self):
         virtual_dev = MagicMock()
         virtual_dev.name = "Virtual Keyboard"
+        virtual_dev.path = "/dev/input/event0"
         real_dev = MagicMock()
         real_dev.name = "Real keyboard"
+        real_dev.path = "/dev/input/event1"
         real_dev.capabilities.return_value = {
             ("EV_KEY", 1): [("KEY_A",), ("KEY_ENTER",)],
         }
@@ -171,19 +175,21 @@ class TestFindKeyboard:
         mock_evdev.list_devices.return_value = ["/dev/input/event0", "/dev/input/event1"]
         mock_evdev.InputDevice.side_effect = [virtual_dev, real_dev]
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is real_dev
+            result = ptt.find_keyboards()
+        assert real_dev in result
+        assert virtual_dev not in result
 
-    def test_returns_none_when_no_keyboard(self):
+    def test_returns_empty_when_no_keyboard(self):
         mock_evdev = MagicMock()
         mock_evdev.list_devices.return_value = []
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is None
+            result = ptt.find_keyboards()
+        assert result == []
 
     def test_skips_device_missing_key_enter(self):
         dev = MagicMock()
         dev.name = "Mouse"
+        dev.path = "/dev/input/event0"
         dev.capabilities.return_value = {
             ("EV_KEY", 1): [("KEY_A",), ("BTN_LEFT",)],
         }
@@ -191,13 +197,14 @@ class TestFindKeyboard:
         mock_evdev.list_devices.return_value = ["/dev/input/event0"]
         mock_evdev.InputDevice.return_value = dev
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is None
+            result = ptt.find_keyboards()
+        assert result == []
 
     def test_handles_tuple_key_names(self):
         """evdev sometimes returns key names as tuples of aliases."""
         dev = MagicMock()
         dev.name = "Keyboard"
+        dev.path = "/dev/input/event0"
         dev.capabilities.return_value = {
             ("EV_KEY", 1): [(("KEY_A", "KEY_A_ALIAS"),), (("KEY_ENTER", "KEY_RETURN"),)],
         }
@@ -205,12 +212,13 @@ class TestFindKeyboard:
         mock_evdev.list_devices.return_value = ["/dev/input/event0"]
         mock_evdev.InputDevice.return_value = dev
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is dev
+            result = ptt.find_keyboards()
+        assert dev in result
 
     def test_skips_non_ev_key_types(self):
         dev = MagicMock()
         dev.name = "Keyboard"
+        dev.path = "/dev/input/event0"
         dev.capabilities.return_value = {
             ("EV_REL", 2): [("REL_X",), ("REL_Y",)],
         }
@@ -218,8 +226,40 @@ class TestFindKeyboard:
         mock_evdev.list_devices.return_value = ["/dev/input/event0"]
         mock_evdev.InputDevice.return_value = dev
         with patch.dict("sys.modules", {"evdev": mock_evdev}):
-            result = ptt.find_keyboard()
-        assert result is None
+            result = ptt.find_keyboards()
+        assert result == []
+
+    def test_exclude_skips_known_paths(self):
+        dev = MagicMock()
+        dev.name = "Keyboard"
+        dev.path = "/dev/input/event0"
+        mock_evdev = MagicMock()
+        mock_evdev.list_devices.return_value = ["/dev/input/event0"]
+        with patch.dict("sys.modules", {"evdev": mock_evdev}):
+            result = ptt.find_keyboards(exclude=["/dev/input/event0"])
+        mock_evdev.InputDevice.assert_not_called()
+        assert result == []
+
+    def test_returns_multiple_keyboards(self):
+        dev0 = MagicMock()
+        dev0.name = "USB Keyboard"
+        dev0.path = "/dev/input/event0"
+        dev0.capabilities.return_value = {
+            ("EV_KEY", 1): [("KEY_A",), ("KEY_ENTER",)],
+        }
+        dev1 = MagicMock()
+        dev1.name = "PS/2 Keyboard"
+        dev1.path = "/dev/input/event1"
+        dev1.capabilities.return_value = {
+            ("EV_KEY", 1): [("KEY_A",), ("KEY_ENTER",)],
+        }
+        mock_evdev = MagicMock()
+        mock_evdev.list_devices.return_value = ["/dev/input/event0", "/dev/input/event1"]
+        mock_evdev.InputDevice.side_effect = [dev0, dev1]
+        with patch.dict("sys.modules", {"evdev": mock_evdev}):
+            result = ptt.find_keyboards()
+        assert dev0 in result
+        assert dev1 in result
 
 
 # ── AudioBuffer ──────────────────────────────────────────────────────────────
@@ -451,7 +491,7 @@ class TestTranscribeStream:
         with patch.dict("sys.modules", {"aiohttp": mock_aiohttp}), \
              patch.object(ptt, "transcribe_batch", new_callable=AsyncMock, return_value="fallback") as mock_batch:
             result = await ptt.transcribe_stream(b"wavdata", 5000, 2)
-        mock_batch.assert_awaited_once_with(b"wavdata", 5000)
+        mock_batch.assert_awaited_once_with(b"wavdata", 5000, language=None)
         assert result == "fallback"
 
     @pytest.mark.asyncio
@@ -609,69 +649,209 @@ class TestTranscribeChunk:
         assert "?language=fr" in url_arg
 
 
-# ── type_text() ──────────────────────────────────────────────────────────────
+# ── type_text() / abort_typing() ─────────────────────────────────────────────
 
 class TestTypeText:
 
-    def test_empty_text_returns_immediately(self, mock_subprocess):
-        ptt.type_text("", delay_ms=2)
-        mock_subprocess.assert_not_called()
+    def test_empty_text_returns_immediately(self):
+        with patch.object(ptt, "_launch_typing_proc") as mock_launch:
+            ptt.type_text("", delay_ms=2)
+        mock_launch.assert_not_called()
 
-    def test_wayland_ydotool_first(self, mock_subprocess):
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}):
+    def test_none_text_treated_as_falsy(self):
+        with patch.object(ptt, "_launch_typing_proc") as mock_launch:
+            ptt.type_text(None, delay_ms=2)
+        mock_launch.assert_not_called()
+
+    def test_wayland_ydotool_success(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch:
             ptt.type_text("hello", delay_ms=4)
-        mock_subprocess.assert_called_once()
-        args = mock_subprocess.call_args[0][0]
-        assert args[0] == "ydotool"
-        assert "type" in args
-        assert "hello" in args
+        assert mock_launch.call_count == 1
+        cmd = mock_launch.call_args[0][0]
+        assert cmd[0] == "ydotool"
+        assert "type" in cmd
+        assert "hello" in cmd
 
-    def test_wayland_falls_back_to_wtype(self, mock_subprocess):
-        mock_subprocess.side_effect = [
-            FileNotFoundError("no ydotool"),
-            MagicMock(returncode=0),
-        ]
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}):
+    def test_wayland_falls_back_to_wtype(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", side_effect=[None, 0]) as mock_launch:
             ptt.type_text("hello", delay_ms=2)
-        assert mock_subprocess.call_count == 2
-        args = mock_subprocess.call_args_list[1][0][0]
-        assert args[0] == "wtype"
+        assert mock_launch.call_count == 2
+        cmd = mock_launch.call_args_list[1][0][0]
+        assert cmd[0] == "wtype"
 
-    def test_wayland_falls_back_to_wl_copy(self, mock_subprocess):
-        mock_subprocess.side_effect = [
-            FileNotFoundError("no ydotool"),
-            FileNotFoundError("no wtype"),
-            MagicMock(returncode=0),
-        ]
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}):
+    def test_wayland_falls_back_to_wl_copy(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", side_effect=[None, None]), \
+             patch("subprocess.run") as mock_run:
             ptt.type_text("hello", delay_ms=2)
-        assert mock_subprocess.call_count == 3
-        args = mock_subprocess.call_args_list[2][0][0]
-        assert args[0] == "wl-copy"
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "wl-copy"
+        assert "hello" in cmd
 
-    def test_wayland_all_fail(self, mock_subprocess):
-        mock_subprocess.side_effect = FileNotFoundError("nothing works")
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}):
+    def test_wayland_all_fail(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", side_effect=[None, None]), \
+             patch("subprocess.run", side_effect=FileNotFoundError):
+            ptt.type_text("hello", delay_ms=2)  # should not raise
+
+    def test_wayland_abort_stops_fallback(self):
+        """rc < 0 (SIGTERM) must not fall through to wtype."""
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=-15) as mock_launch:
             ptt.type_text("hello", delay_ms=2)
-        assert mock_subprocess.call_count == 3
+        assert mock_launch.call_count == 1
 
-    def test_x11_xdotool(self, mock_subprocess):
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}):
+    def test_x11_xdotool_success(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch:
             ptt.type_text("hello", delay_ms=4)
-        args = mock_subprocess.call_args[0][0]
-        assert args[0] == "xdotool"
-        assert "type" in args
-        assert "--clearmodifiers" in args
+        cmd = mock_launch.call_args[0][0]
+        assert cmd[0] == "xdotool"
+        assert "--clearmodifiers" in cmd
+        assert "hello" in cmd
 
-    def test_x11_xdotool_fails(self, mock_subprocess):
-        mock_subprocess.side_effect = FileNotFoundError("no xdotool")
-        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}):
+    def test_x11_xdotool_not_found(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=None):
+            ptt.type_text("hello", delay_ms=2)  # should not raise
+
+    def test_x11_xdotool_fails(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=1):
+            ptt.type_text("hello", delay_ms=2)  # should not raise
+
+
+class TestClipboardMode:
+
+    def setup_method(self):
+        ptt._set_clipboard_mode(False)
+
+    def teardown_method(self):
+        ptt._set_clipboard_mode(False)
+
+    def test_set_clipboard_mode_true(self):
+        ptt._set_clipboard_mode(True)
+        assert ptt._clipboard_mode is True
+
+    def test_set_clipboard_mode_false(self):
+        ptt._set_clipboard_mode(True)
+        ptt._set_clipboard_mode(False)
+        assert ptt._clipboard_mode is False
+
+    def test_type_text_uses_clipboard_when_mode_enabled(self):
+        ptt._set_clipboard_mode(True)
+        with patch.object(ptt, "_type_text_clipboard") as mock_clip, \
+             patch.object(ptt, "_launch_typing_proc") as mock_launch:
             ptt.type_text("hello", delay_ms=2)
-        # Should not raise
+        mock_clip.assert_called_once_with("hello")
+        mock_launch.assert_not_called()
 
-    def test_none_text_treated_as_falsy(self, mock_subprocess):
-        ptt.type_text(None, delay_ms=2)
-        mock_subprocess.assert_not_called()
+    def test_type_text_skips_clipboard_when_mode_disabled(self):
+        ptt._set_clipboard_mode(False)
+        with patch.object(ptt, "_type_text_clipboard") as mock_clip, \
+             patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_launch_typing_proc", return_value=0):
+            ptt.type_text("hello", delay_ms=2)
+        mock_clip.assert_not_called()
+
+    def test_type_text_clipboard_empty_text_skipped(self):
+        ptt._set_clipboard_mode(True)
+        with patch.object(ptt, "_type_text_clipboard") as mock_clip:
+            ptt.type_text("", delay_ms=2)
+        mock_clip.assert_not_called()
+
+    def test_type_text_clipboard_wayland_paste_sequence(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_clipboard_save", return_value=b"old"), \
+             patch.object(ptt, "_clipboard_write", return_value=True) as mock_write, \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch("time.sleep"):
+            ptt._type_text_clipboard("hello")
+        # wrote the new text then restored old
+        assert mock_write.call_count == 2
+        assert mock_write.call_args_list[0] == call("hello")
+        assert mock_write.call_args_list[1] == call(b"old")
+        # sent Ctrl+V via ydotool
+        cmd = mock_launch.call_args[0][0]
+        assert cmd[0] == "ydotool"
+        assert "key" in cmd
+
+    def test_type_text_clipboard_wayland_clears_on_no_prior(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_clipboard_save", return_value=None), \
+             patch.object(ptt, "_clipboard_write", return_value=True), \
+             patch.object(ptt, "_clipboard_clear") as mock_clear, \
+             patch.object(ptt, "_launch_typing_proc", return_value=0), \
+             patch("time.sleep"):
+            ptt._type_text_clipboard("hello")
+        mock_clear.assert_called_once()
+
+    def test_type_text_clipboard_write_failure_aborts(self):
+        with patch.object(ptt, "_clipboard_save", return_value=None), \
+             patch.object(ptt, "_clipboard_write", return_value=False), \
+             patch.object(ptt, "_launch_typing_proc") as mock_launch:
+            ptt._type_text_clipboard("hello")
+        mock_launch.assert_not_called()
+
+    def test_type_text_clipboard_x11_paste_sequence(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}), \
+             patch.object(ptt, "_clipboard_save", return_value=b"old"), \
+             patch.object(ptt, "_clipboard_write", return_value=True) as mock_write, \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch("time.sleep"):
+            ptt._type_text_clipboard("hello")
+        cmd = mock_launch.call_args[0][0]
+        assert cmd[0] == "xdotool"
+        assert "ctrl+v" in cmd
+        assert mock_write.call_count == 2  # write text + restore
+
+    def test_clipboard_save_wayland_success(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b"old text")
+            result = ptt._clipboard_save()
+        assert result == b"old text"
+
+    def test_clipboard_save_wayland_empty(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout=b"")
+            result = ptt._clipboard_save()
+        assert result is None
+
+    def test_clipboard_write_wayland_success(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            result = ptt._clipboard_write("hello")
+        assert result is True
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "wl-copy"
+
+
+class TestAbortTyping:
+
+    def test_terminates_running_proc(self):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None  # still running
+        ptt._typing_proc = mock_proc
+        ptt.abort_typing()
+        mock_proc.terminate.assert_called_once()
+        ptt._typing_proc = None
+
+    def test_no_proc_does_nothing(self):
+        ptt._typing_proc = None
+        ptt.abort_typing()  # should not raise
+
+    def test_already_finished_proc_not_terminated(self):
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = 0  # already exited
+        ptt._typing_proc = mock_proc
+        ptt.abort_typing()
+        mock_proc.terminate.assert_not_called()
+        ptt._typing_proc = None
 
 
 # ── _try_dbus_call() ─────────────────────────────────────────────────────────

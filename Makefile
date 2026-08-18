@@ -254,7 +254,7 @@ $(SYSTEMD_DIR)/whisper-cpp-server.service:
 		'Type=simple' \
 		"WorkingDirectory=$(PROJECT_DIR)" \
 		"Environment=LD_LIBRARY_PATH=$$LD_PATH" \
-		"ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --model $(WHISPER_CPP_MODELS_DIR)/$(WHISPER_CPP_MODEL) --device $$CPP_DEVICE" \
+		"ExecStart=$(PYTHON) $(PROJECT_DIR)/server-whisper-cpp.py --port $(WHISPER_CPP_PORT) --model $(WHISPER_CPP_MODELS_DIR)/$(WHISPER_CPP_MODEL) --device $$CPP_DEVICE --no-speech-thold 1.0" \
 		'Restart=on-failure' \
 		'RestartSec=5' \
 		'' \
@@ -285,14 +285,21 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 # Service management
 # ----------------------------------------------------------------------------
 
-enable: ## Enable services (whisper-server, whisper-cpp-server, push-to-talk)
+enable: ## Enable services (whisper-server, push-to-talk; optionally whisper-cpp-server)
 	systemctl --user enable whisper-server.service
-	systemctl --user enable whisper-cpp-server.service
 	systemctl --user enable push-to-talk.service
+	@printf 'Enable whisper-cpp-server (port $(WHISPER_CPP_PORT), GGML encoder-only fallback)? [y/N] '; \
+	read ans; \
+	case "$$ans" in \
+		[Yy]*) systemctl --user enable whisper-cpp-server.service; echo "whisper-cpp-server enabled" ;; \
+		*)     systemctl --user disable whisper-cpp-server.service 2>/dev/null; echo "whisper-cpp-server skipped" ;; \
+	esac
 
-start: ## Start services
+start: ## Start services (whisper-server, push-to-talk; optionally whisper-cpp-server)
 	systemctl --user start whisper-server.service
-	systemctl --user start whisper-cpp-server.service
+	@if systemctl --user is-enabled whisper-cpp-server.service >/dev/null 2>&1; then \
+		systemctl --user start whisper-cpp-server.service; \
+	fi
 	@echo "Waiting for whisper-server to load model..."
 	@for i in $$(seq 1 60); do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && break; sleep 1; done
 	systemctl --user start push-to-talk.service

@@ -55,6 +55,7 @@ CONFIG_KEY_MAP = {
     "mute-other-streams":           ("mute_streams", bool, False),
     "voice-commands-enabled":       ("voice_commands", bool, True),
     "notifications-enabled":        ("notifications", bool, True),
+    "clipboard-mode":               ("clipboard_mode", bool, False),
 }
 
 
@@ -84,6 +85,7 @@ def build_settings(args):
         "mute_streams": args.mute_other_streams or os.environ.get("WHISPER_MUTE_STREAMS", "") == "1",
         "voice_commands": not args.no_commands,
         "notifications": not args.no_notify,
+        "clipboard_mode": False,
     }
 
 
@@ -385,7 +387,7 @@ async def transcribe_stream(wav_bytes, port, type_delay_ms, language=None):
             async with session.post(url, data=wav_bytes) as resp:
                 if resp.status != 200:
                     log.warning("Stream endpoint returned %d, falling back to batch", resp.status)
-                    return await transcribe_batch(wav_bytes, port)
+                    return await transcribe_batch(wav_bytes, port, language=language)
                 async for line in resp.content:
                     line = line.decode("utf-8").strip()
                     if not line.startswith("data: "):
@@ -398,7 +400,7 @@ async def transcribe_stream(wav_bytes, port, type_delay_ms, language=None):
                         break
                     chunk = data.get("text", "")
                     if chunk:
-                        type_text(chunk, delay_ms=type_delay_ms)
+                        await type_text_async(chunk, delay_ms=type_delay_ms)
                         typed_any = True
     except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as e:
         log.warning("Streaming transcription failed: %s", e)
@@ -446,34 +448,170 @@ async def transcribe_chunk(wav_bytes, port, language=None):
         return ""
 
 
+_typing_proc = None
+_typing_lock = threading.Lock()
+_clipboard_mode = False
+
+
+def _set_clipboard_mode(enabled):
+    global _clipboard_mode
+    _clipboard_mode = bool(enabled)
+
+
+def _launch_typing_proc(cmd):
+    """Popen *cmd*, register handle for abort_typing(), wait, return returncode.
+    Returns None if the binary is not found."""
+    global _typing_proc
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        return None
+    with _typing_lock:
+        _typing_proc = proc
+    rc = proc.wait()
+    with _typing_lock:
+        if _typing_proc is proc:
+            _typing_proc = None
+    return rc
+
+
+def abort_typing():
+    """Terminate any in-flight typing subprocess (called on Escape key press)."""
+    with _typing_lock:
+        proc = _typing_proc
+    if proc and proc.poll() is None:
+        proc.terminate()
+
+
+def _clipboard_save():
+    """Return current clipboard bytes (or None if empty/unavailable)."""
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type == "wayland":
+        try:
+            r = subprocess.run(["wl-paste", "--no-newline"], capture_output=True)
+            return r.stdout if r.returncode == 0 else None
+        except FileNotFoundError:
+            return None
+    else:
+        for cmd in [["xclip", "-selection", "clipboard", "-o"],
+                    ["xsel", "--clipboard", "--output"]]:
+            try:
+                r = subprocess.run(cmd, capture_output=True)
+                if r.returncode == 0:
+                    return r.stdout
+            except FileNotFoundError:
+                continue
+        return None
+
+
+def _clipboard_write(data):
+    """Write bytes or str to clipboard. Returns True on success."""
+    if isinstance(data, str):
+        data = data.encode()
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type == "wayland":
+        try:
+            subprocess.run(["wl-copy", "--"], input=data, check=True)
+            return True
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            return False
+    else:
+        for cmd in [["xclip", "-selection", "clipboard"],
+                    ["xsel", "--clipboard", "--input"]]:
+            try:
+                subprocess.run(cmd, input=data, check=True)
+                return True
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                continue
+        return False
+
+
+def _clipboard_clear():
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type == "wayland":
+        try:
+            subprocess.run(["wl-copy", "--clear"], check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            pass
+    else:
+        _clipboard_write(b"")
+
+
+def _type_text_clipboard(text):
+    """Paste *text* via clipboard + Ctrl-V. Saves and restores previous clipboard."""
+    import time as _time
+    old = _clipboard_save()
+    if not _clipboard_write(text):
+        log.error("Clipboard write failed — no wl-copy/xclip/xsel found")
+        return
+
+    session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    if session_type == "wayland":
+        # ydotool key codes: 29=LeftCtrl, 47=v
+        rc = _launch_typing_proc(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
+        if rc is None:
+            log.warning("ydotool not found; text is in clipboard — paste manually (Ctrl+V)")
+    else:
+        rc = _launch_typing_proc(["xdotool", "key", "ctrl+v"])
+        if rc is None:
+            log.warning("xdotool not found; text is in clipboard — paste manually (Ctrl+V)")
+
+    # Wait briefly for the target app to consume the clipboard before restoring.
+    _time.sleep(0.15)
+    if old is not None:
+        _clipboard_write(old)
+    else:
+        _clipboard_clear()
+
+
 def type_text(text, delay_ms=2):
-    """Type text into the focused window using wtype (Wayland) or xdotool (X11)."""
+    """Type text into the focused window using wtype (Wayland) or xdotool (X11).
+
+    When clipboard mode is active, pastes via clipboard + Ctrl-V instead, which
+    is atomic (no window-focus issue) and instant regardless of text length.
+    """
     if not text:
+        return
+
+    if _clipboard_mode:
+        _type_text_clipboard(text)
         return
 
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
 
     if session_type == "wayland":
-        try:
-            subprocess.run(["ydotool", "type", "-d", str(delay_ms), "--", text], check=True)
-            return
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            log.warning("ydotool failed: %s", e)
-        try:
-            subprocess.run(["wtype", "-d", str(delay_ms), "--", text], check=True)
-            return
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            log.warning("wtype failed: %s", e)
+        for tool, cmd in [
+            ("ydotool", ["ydotool", "type", "-d", str(delay_ms), "--", text]),
+            ("wtype",   ["wtype",   "-d", str(delay_ms), "--", text]),
+        ]:
+            rc = _launch_typing_proc(cmd)
+            if rc is None:
+                log.warning("%s not found", tool)
+                continue
+            if rc <= 0:  # 0 = success; negative = killed by signal (Escape abort)
+                return
+            log.warning("%s failed (rc=%d), trying next", tool, rc)
         try:
             subprocess.run(["wl-copy", text], check=True)
             log.info("Text copied to clipboard (install ydotool or wtype for direct typing)")
         except (FileNotFoundError, subprocess.CalledProcessError) as e:
             log.error("All typing methods failed: %s", e)
     else:
-        try:
-            subprocess.run(["xdotool", "type", "--delay", str(delay_ms), "--clearmodifiers", "--", text], check=True)
-        except (FileNotFoundError, subprocess.CalledProcessError) as e:
-            log.error("xdotool failed: %s", e)
+        rc = _launch_typing_proc(
+            ["xdotool", "type", "--delay", str(delay_ms), "--clearmodifiers", "--", text]
+        )
+        if rc is None:
+            log.error("xdotool not found")
+        elif rc > 0:
+            log.error("xdotool failed (rc=%d)", rc)
+
+
+async def type_text_async(text, delay_ms=2):
+    """Run type_text in a thread executor so the asyncio event loop stays responsive.
+    This lets Escape key events be processed and abort_typing() called mid-output."""
+    await asyncio.get_running_loop().run_in_executor(
+        None, lambda: type_text(text, delay_ms=delay_ms)
+    )
 
 
 def _try_dbus_call(bus_name, object_path, interface, method, args_variant, reply_type):
@@ -801,6 +939,7 @@ async def main():
             derived["target_key"] = new_key
         derived["backend_port"] = args.port if s["backend"] == "openvino" else 5001
         derived["recall_key"] = getattr(ecodes, s["recall_key"], None)
+        _set_clipboard_mode(s.get("clipboard_mode", False))
 
     update_derived(settings)
 
@@ -889,7 +1028,7 @@ async def main():
                     backspace_n(chars_to_erase)
                     typed_char_count -= chars_to_erase
                 if new_suffix:
-                    type_text(new_suffix, delay_ms=delay_ms)
+                    await type_text_async(new_suffix, delay_ms=delay_ms)
                     typed_char_count += len(new_suffix)
                 log.info("Live (-%d +%d): %s", chars_to_erase, len(new_suffix), text[:80])
                 streamed_text = text
@@ -945,7 +1084,7 @@ async def main():
                 if chars_to_erase > 0:
                     backspace_n(chars_to_erase)
                 if new_suffix:
-                    type_text(new_suffix, delay_ms=delay_ms)
+                    await type_text_async(new_suffix, delay_ms=delay_ms)
                 log.info("Final (-%d +%d): %s", chars_to_erase, len(new_suffix), text[:80])
             typed_char_count = 0
             streamed_text = ""
@@ -1005,7 +1144,7 @@ async def main():
             used_dbus = True
         if not used_dbus:
             log.info("Typing: %s", text[:80])
-            type_text(text, delay_ms=delay_ms)
+            await type_text_async(text, delay_ms=delay_ms)
 
         if settings["notifications"]:
             notify("Whisper", text[:200])
@@ -1097,7 +1236,7 @@ async def main():
 
         if new_text and new_text != last_typed_text:
             backspace_n(len(last_typed_text))
-            type_text(new_text, delay_ms=settings["type_delay"])
+            await type_text_async(new_text, delay_ms=settings["type_delay"])
             log.info("Corrected: %s -> %s", last_typed_text[:40], new_text[:40])
             if settings["notifications"]:
                 notify("Correction", f"{new_text[:200]}")
@@ -1116,6 +1255,8 @@ async def main():
     async def pump_events(dev):
         try:
             async for ev in dev.async_read_loop():
+                if ev.type == ecodes.EV_KEY and ev.code == ecodes.KEY_ESC and ev.value == 1:
+                    abort_typing()
                 await event_queue.put(ev)
         except OSError:
             log.warning("Keyboard %s disconnected", dev.name)

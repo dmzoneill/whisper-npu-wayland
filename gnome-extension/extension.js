@@ -844,6 +844,7 @@ const WhisperIndicator = GObject.registerClass(
       this._audioFeedbackToggle = addToggle('Audio Feedback', 'audio-feedback-enabled', 'audio-volume-high-symbolic')
       this._formattingToggle = addToggle('Dictation Formatting', 'dictation-formatting-enabled', 'format-indent-more-symbolic')
       this._muteStreamsToggle = addToggle('Mute Other Streams', 'mute-other-streams', 'audio-volume-muted-symbolic')
+      this._clipboardModeToggle = addToggle('Clipboard Paste', 'clipboard-mode', 'edit-paste-symbolic')
     }
 
     // -- Radio groups -------------------------------------------------------
@@ -1235,7 +1236,8 @@ const WhisperIndicator = GObject.registerClass(
         'vad-threshold': this._settings.get_int('vad-threshold'),
         'stream-interval': this._settings.get_double('stream-interval'),
         'translate-to': this._settings.get_string('translate-to'),
-        'mute-other-streams': this._settings.get_boolean('mute-other-streams')
+        'mute-other-streams': this._settings.get_boolean('mute-other-streams'),
+        'clipboard-mode': this._settings.get_boolean('clipboard-mode')
       }
     }
 

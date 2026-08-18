@@ -122,5 +122,11 @@
       <description>Mute other recording streams (e.g. video call microphone) while push-to-talk is recording, then restore them when recording stops. Mutes the streams, not the input device itself.</description>
     </key>
 
+    <key name="clipboard-mode" type="b">
+      <default>false</default>
+      <summary>Clipboard paste mode</summary>
+      <description>When enabled, transcribed text is pasted via clipboard (Ctrl+V) instead of key-by-key typing. Paste is atomic and instantaneous, so changing focus mid-output no longer redirects text to the wrong window.</description>
+    </key>
+
   </schema>
 </schemalist>

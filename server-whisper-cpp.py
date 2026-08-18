@@ -340,6 +340,16 @@ def health():
     return jsonify({"status": "ok", "backend": "whisper.cpp", "model": model.model_path})
 
 
+@app.route("/models", methods=["GET"])
+def list_models():
+    return jsonify({"models": [model.model_path]})
+
+
+@app.route("/model/default", methods=["GET"])
+def get_default_model():
+    return jsonify({"model": model.model_path})
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
