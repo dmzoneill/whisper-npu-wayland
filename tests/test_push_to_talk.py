@@ -807,35 +807,49 @@ class TestClipboardMode:
             ptt.type_text("", delay_ms=2)
         mock_clip.assert_not_called()
 
+    def _make_wl_popen_mock(self):
+        """Return a mock Popen instance suitable for wl-copy --foreground."""
+        proc = MagicMock()
+        proc.stdin = MagicMock()
+        proc.wait.return_value = 0
+        return proc
+
     def test_type_text_clipboard_wayland_paste_sequence(self):
+        wl_proc = self._make_wl_popen_mock()
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
              patch.object(ptt, "_clipboard_save", return_value=b"old"), \
+             patch("subprocess.Popen", return_value=wl_proc) as mock_popen, \
              patch.object(ptt, "_clipboard_write", return_value=True) as mock_write, \
              patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
              patch("time.sleep"):
             ptt._type_text_clipboard("hello")
-        # wrote the new text then restored old
-        assert mock_write.call_count == 2
-        assert mock_write.call_args_list[0] == call("hello")
-        assert mock_write.call_args_list[1] == call(b"old")
+        # wl-copy Popen started with --foreground --paste-once
+        popen_cmd = mock_popen.call_args[0][0]
+        assert popen_cmd[0] == "wl-copy"
+        assert "--foreground" in popen_cmd
+        assert "--paste-once" in popen_cmd
         # sent Ctrl+V via ydotool
         cmd = mock_launch.call_args[0][0]
         assert cmd[0] == "ydotool"
         assert "key" in cmd
+        # restored old clipboard
+        mock_write.assert_called_once_with(b"old")
 
     def test_type_text_clipboard_wayland_clears_on_no_prior(self):
+        wl_proc = self._make_wl_popen_mock()
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
              patch.object(ptt, "_clipboard_save", return_value=None), \
-             patch.object(ptt, "_clipboard_write", return_value=True), \
+             patch("subprocess.Popen", return_value=wl_proc), \
              patch.object(ptt, "_clipboard_clear") as mock_clear, \
              patch.object(ptt, "_launch_typing_proc", return_value=0), \
              patch("time.sleep"):
             ptt._type_text_clipboard("hello")
         mock_clear.assert_called_once()
 
-    def test_type_text_clipboard_write_failure_aborts(self):
-        with patch.object(ptt, "_clipboard_save", return_value=None), \
-             patch.object(ptt, "_clipboard_write", return_value=False), \
+    def test_type_text_clipboard_wayland_wlcopy_not_found_aborts(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_clipboard_save", return_value=None), \
+             patch("subprocess.Popen", side_effect=FileNotFoundError), \
              patch.object(ptt, "_launch_typing_proc") as mock_launch:
             ptt._type_text_clipboard("hello")
         mock_launch.assert_not_called()

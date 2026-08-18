@@ -546,26 +546,58 @@ def _clipboard_clear():
 
 
 def _type_text_clipboard(text):
-    """Paste *text* via clipboard + Ctrl-V. Saves and restores previous clipboard."""
+    """Paste *text* via clipboard + Ctrl-V. Saves and restores previous clipboard.
+
+    Uses wl-copy --foreground --paste-once (Wayland) so wl-copy stays alive and
+    owns the clipboard before we send Ctrl-V. The default wl-copy fork-to-background
+    exits the parent immediately; the child takes a few ms to connect to the
+    compositor, creating a race where Ctrl-V fires before the clipboard is ready.
+    --foreground avoids the fork; --paste-once exits after one paste is served.
+    """
     import time as _time
     old = _clipboard_save()
-    if not _clipboard_write(text):
-        log.error("Clipboard write failed — no wl-copy/xclip/xsel found")
-        return
-
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
+
     if session_type == "wayland":
-        # ydotool key codes: 29=LeftCtrl, 47=v
+        try:
+            wl_proc = subprocess.Popen(
+                ["wl-copy", "--foreground", "--paste-once", "--"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            wl_proc.stdin.write(text.encode())
+            wl_proc.stdin.close()
+        except FileNotFoundError:
+            log.error("wl-copy not found — install wl-clipboard for clipboard paste mode")
+            return
+
+        # Give compositor time to register the clipboard offer before sending Ctrl-V.
+        _time.sleep(0.1)
+
         rc = _launch_typing_proc(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
         if rc is None:
             log.warning("ydotool not found; text is in clipboard — paste manually (Ctrl+V)")
+            wl_proc.terminate()
+        elif rc != 0:
+            log.warning("ydotool key ctrl+v failed (rc=%d)", rc)
+            wl_proc.terminate()
+
+        try:
+            wl_proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            wl_proc.terminate()
     else:
+        if not _clipboard_write(text):
+            log.error("Clipboard write failed — install xclip or xsel")
+            return
         rc = _launch_typing_proc(["xdotool", "key", "ctrl+v"])
         if rc is None:
             log.warning("xdotool not found; text is in clipboard — paste manually (Ctrl+V)")
+        elif rc != 0:
+            log.warning("xdotool key ctrl+v failed (rc=%d)", rc)
 
-    # Wait briefly for the target app to consume the clipboard before restoring.
-    _time.sleep(0.15)
+    _time.sleep(0.1)
     if old is not None:
         _clipboard_write(old)
     else:
