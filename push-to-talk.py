@@ -247,12 +247,16 @@ def unmute_streams(muted_list):
             log.warning("Failed to restore recording stream %d: %s", idx, e)
 
 
-def find_keyboards(exclude=()):
+def find_keyboards(exclude=(), target_key_name=None):
     """Find all keyboard devices in /dev/input/, skipping paths in exclude.
 
     Multiple devices advertise a full key range (e.g. gaming mice expose a
     phantom keyboard interface), so listen on every real keyboard rather
     than guessing which one the user will press the hold key on.
+
+    target_key_name: if the hotkey lives on a non-keyboard device (e.g.
+    ThinkPad Extra Buttons with KEY_VOICECOMMAND), that device is also
+    included so its events reach the event loop.
     """
     import evdev
     kbds = []
@@ -273,10 +277,14 @@ def find_keyboards(exclude=()):
             if etype == "EV_KEY":
                 key_names = [c[0] if isinstance(c[0], str) else c[0][0] for c in codes]
                 if "KEY_A" in key_names and "KEY_ENTER" in key_names:
-                    kbds.append(dev)
                     matched = True
                     break
-        if not matched:
+                if target_key_name and target_key_name in key_names:
+                    matched = True
+                    break
+        if matched:
+            kbds.append(dev)
+        else:
             dev.close()
     return kbds
 
@@ -947,7 +955,7 @@ async def main():
         log.error("Unknown key: %s", settings["key"])
         sys.exit(1)
 
-    kbds = find_keyboards()
+    kbds = find_keyboards(target_key_name=settings["key"])
     if not kbds:
         log.error("No keyboard found in /dev/input/ — run with sudo or add user to 'input' group")
         sys.exit(1)
@@ -1279,7 +1287,7 @@ async def main():
             for path, task in list(pumps.items()):
                 if task.done():
                     del pumps[path]
-            for dev in find_keyboards(exclude=pumps.keys()):
+            for dev in find_keyboards(exclude=pumps.keys(), target_key_name=settings["key"]):
                 log.info("Keyboard %s connected (%s)", dev.name, dev.path)
                 pumps[dev.path] = asyncio.create_task(pump_events(dev))
 

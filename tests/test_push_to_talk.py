@@ -261,6 +261,51 @@ class TestFindKeyboards:
         assert dev0 in result
         assert dev1 in result
 
+    def test_target_key_includes_non_keyboard_device(self):
+        """ThinkPad Extra Buttons with KEY_VOICECOMMAND should be found when that key is the target."""
+        extra_dev = MagicMock()
+        extra_dev.name = "ThinkPad Extra Buttons"
+        extra_dev.path = "/dev/input/event12"
+        extra_dev.capabilities.return_value = {
+            ("EV_KEY", 1): [("KEY_VOICECOMMAND",), ("KEY_MICMUTE",)],
+        }
+        mock_evdev = MagicMock()
+        mock_evdev.list_devices.return_value = ["/dev/input/event12"]
+        mock_evdev.InputDevice.return_value = extra_dev
+        with patch.dict("sys.modules", {"evdev": mock_evdev}):
+            result = ptt.find_keyboards(target_key_name="KEY_VOICECOMMAND")
+        assert extra_dev in result
+
+    def test_target_key_not_on_device_still_excluded(self):
+        """Non-keyboard device without the target key is still excluded."""
+        dev = MagicMock()
+        dev.name = "ThinkPad Extra Buttons"
+        dev.path = "/dev/input/event12"
+        dev.capabilities.return_value = {
+            ("EV_KEY", 1): [("KEY_MICMUTE",), ("KEY_VOLUMEUP",)],
+        }
+        mock_evdev = MagicMock()
+        mock_evdev.list_devices.return_value = ["/dev/input/event12"]
+        mock_evdev.InputDevice.return_value = dev
+        with patch.dict("sys.modules", {"evdev": mock_evdev}):
+            result = ptt.find_keyboards(target_key_name="KEY_VOICECOMMAND")
+        assert result == []
+
+    def test_target_key_none_does_not_change_existing_behavior(self):
+        """Passing target_key_name=None still requires full keyboard (KEY_A + KEY_ENTER)."""
+        dev = MagicMock()
+        dev.name = "ThinkPad Extra Buttons"
+        dev.path = "/dev/input/event12"
+        dev.capabilities.return_value = {
+            ("EV_KEY", 1): [("KEY_VOICECOMMAND",), ("KEY_MICMUTE",)],
+        }
+        mock_evdev = MagicMock()
+        mock_evdev.list_devices.return_value = ["/dev/input/event12"]
+        mock_evdev.InputDevice.return_value = dev
+        with patch.dict("sys.modules", {"evdev": mock_evdev}):
+            result = ptt.find_keyboards(target_key_name=None)
+        assert result == []
+
 
 # ── AudioBuffer ──────────────────────────────────────────────────────────────
 

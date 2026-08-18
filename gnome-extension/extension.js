@@ -36,7 +36,9 @@ const HOTKEYS = [
   'KEY_RIGHTSHIFT',
   'KEY_LEFTSHIFT',
   'KEY_SCROLLLOCK',
-  'KEY_PAUSE'
+  'KEY_PAUSE',
+  'KEY_VOICECOMMAND',
+  'KEY_ASSISTANT'
 ]
 const DEFAULT_TONES = ['diplomatic', 'professional']
 const LANGUAGES = [
@@ -978,6 +980,11 @@ const WhisperIndicator = GObject.registerClass(
     }
 
     _formatHotkey (key) {
+      const labels = {
+        KEY_VOICECOMMAND: 'Copilot / Voice Command',
+        KEY_ASSISTANT: 'Assistant (AI key)'
+      }
+      if (labels[key]) return labels[key]
       return key.replace('KEY_', '').replace(/([A-Z])([A-Z]+)/g, (_, first, rest) => {
         return first + rest.toLowerCase()
       })

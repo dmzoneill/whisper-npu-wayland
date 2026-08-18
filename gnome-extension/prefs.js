@@ -85,7 +85,7 @@ export default class WhisperNpuPreferences extends ExtensionPreferences {
     backendRow.activatable = false
     group.add(backendRow)
 
-    const HOTKEYS = ['KEY_RIGHTCTRL', 'KEY_LEFTCTRL', 'KEY_RIGHTALT', 'KEY_LEFTALT', 'KEY_RIGHTSHIFT', 'KEY_LEFTSHIFT', 'KEY_SCROLLLOCK', 'KEY_PAUSE']
+    const HOTKEYS = ['KEY_RIGHTCTRL', 'KEY_LEFTCTRL', 'KEY_RIGHTALT', 'KEY_LEFTALT', 'KEY_RIGHTSHIFT', 'KEY_LEFTSHIFT', 'KEY_SCROLLLOCK', 'KEY_PAUSE', 'KEY_VOICECOMMAND', 'KEY_ASSISTANT']
     const hotkeyCombo = new Gtk.ComboBoxText({ valign: Gtk.Align.CENTER })
     for (const k of HOTKEYS) { hotkeyCombo.append_text(k) }
     const currentHotkey = settings.get_string('hotkey')
