@@ -545,23 +545,45 @@ def _clipboard_clear():
         _clipboard_write(b"")
 
 
-def _type_text_clipboard(text):
-    """Paste *text* via clipboard + Ctrl-V. Saves and restores previous clipboard.
+TERMINAL_APP_IDS = {
+    "org.gnome.Terminal",
+    "org.gnome.Console",
+    "com.raggesilver.BlackBox",
+    "com.mitchellh.ghostty",
+    "io.elementary.terminal",
+    "org.kde.konsole",
+    "org.kde.yakuake",
+    "org.xfce.terminal",
+    "com.alacritty.Alacritty",
+    "foot",
+    "kitty",
+    "wezterm-gui",
+    "net.sourceforge.xterm",
+}
 
-    Uses wl-copy --foreground --paste-once (Wayland) so wl-copy stays alive and
-    owns the clipboard before we send Ctrl-V. The default wl-copy fork-to-background
-    exits the parent immediately; the child takes a few ms to connect to the
-    compositor, creating a race where Ctrl-V fires before the clipboard is ready.
-    --foreground avoids the fork; --paste-once exits after one paste is served.
+
+def _is_terminal_focused():
+    app_id, _ = get_focused_app()
+    return app_id.removesuffix(".desktop") in TERMINAL_APP_IDS
+
+
+def _type_text_clipboard(text):
+    """Paste *text* via clipboard + Ctrl-V (or Ctrl-Shift-V for terminals).
+
+    On Wayland: uses wl-copy --foreground (without --paste-once). --paste-once
+    exits after the first clipboard read, which a clipboard manager triggers
+    immediately, leaving nothing for the actual Ctrl-V paste. We kill wl_proc
+    manually after the paste completes.
     """
     import time as _time
     old = _clipboard_save()
     session_type = os.environ.get("XDG_SESSION_TYPE", "")
+    is_terminal = _is_terminal_focused()
 
     if session_type == "wayland":
         try:
             wl_proc = subprocess.Popen(
-                ["wl-copy", "--foreground", "--paste-once", "--"],
+                ["wl-copy", "--foreground", "--"],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -572,30 +594,37 @@ def _type_text_clipboard(text):
             log.error("wl-copy not found — install wl-clipboard for clipboard paste mode")
             return
 
-        # Give compositor time to register the clipboard offer before sending Ctrl-V.
+        # Give compositor time to register the clipboard offer before sending paste key.
         _time.sleep(0.1)
 
-        rc = _launch_typing_proc(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
+        if is_terminal:
+            # Terminals use Ctrl+Shift+V (29=Ctrl, 42=LShift, 47=V)
+            key_args = ["29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+        else:
+            key_args = ["29:1", "47:1", "47:0", "29:0"]
+        rc = _launch_typing_proc(["ydotool", "key"] + key_args)
         if rc is None:
-            log.warning("ydotool not found; text is in clipboard — paste manually (Ctrl+V)")
-            wl_proc.terminate()
+            log.warning("ydotool not found; text is in clipboard — paste manually")
         elif rc != 0:
-            log.warning("ydotool key ctrl+v failed (rc=%d)", rc)
-            wl_proc.terminate()
+            log.warning("ydotool key paste failed (rc=%d)", rc)
 
+        # Let app receive and process the paste before killing the clipboard owner.
+        _time.sleep(0.2)
+        wl_proc.terminate()
         try:
-            wl_proc.wait(timeout=2.0)
+            wl_proc.wait(timeout=1.0)
         except subprocess.TimeoutExpired:
-            wl_proc.terminate()
+            wl_proc.kill()
     else:
         if not _clipboard_write(text):
             log.error("Clipboard write failed — install xclip or xsel")
             return
-        rc = _launch_typing_proc(["xdotool", "key", "ctrl+v"])
+        key_combo = "ctrl+shift+v" if is_terminal else "ctrl+v"
+        rc = _launch_typing_proc(["xdotool", "key", key_combo])
         if rc is None:
-            log.warning("xdotool not found; text is in clipboard — paste manually (Ctrl+V)")
+            log.warning("xdotool not found; text is in clipboard — paste manually")
         elif rc != 0:
-            log.warning("xdotool key ctrl+v failed (rc=%d)", rc)
+            log.warning("xdotool key paste failed (rc=%d)", rc)
 
     _time.sleep(0.1)
     if old is not None:

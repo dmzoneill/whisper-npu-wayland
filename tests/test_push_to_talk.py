@@ -821,19 +821,37 @@ class TestClipboardMode:
              patch("subprocess.Popen", return_value=wl_proc) as mock_popen, \
              patch.object(ptt, "_clipboard_write", return_value=True) as mock_write, \
              patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch.object(ptt, "_is_terminal_focused", return_value=False), \
              patch("time.sleep"):
             ptt._type_text_clipboard("hello")
-        # wl-copy Popen started with --foreground --paste-once
+        # wl-copy Popen started with --foreground (no --paste-once: clipboard mgr would consume it)
         popen_cmd = mock_popen.call_args[0][0]
         assert popen_cmd[0] == "wl-copy"
         assert "--foreground" in popen_cmd
-        assert "--paste-once" in popen_cmd
-        # sent Ctrl+V via ydotool
+        assert "--paste-once" not in popen_cmd
+        # sent Ctrl+V via ydotool (non-terminal)
         cmd = mock_launch.call_args[0][0]
         assert cmd[0] == "ydotool"
-        assert "key" in cmd
+        assert "29:1" in cmd
+        assert "42:1" not in cmd  # no Shift
+        # wl_proc killed manually after paste
+        wl_proc.terminate.assert_called_once()
         # restored old clipboard
         mock_write.assert_called_once_with(b"old")
+
+    def test_type_text_clipboard_wayland_terminal_uses_ctrl_shift_v(self):
+        wl_proc = self._make_wl_popen_mock()
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
+             patch.object(ptt, "_clipboard_save", return_value=None), \
+             patch("subprocess.Popen", return_value=wl_proc), \
+             patch.object(ptt, "_clipboard_clear"), \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch.object(ptt, "_is_terminal_focused", return_value=True), \
+             patch("time.sleep"):
+            ptt._type_text_clipboard("hello")
+        cmd = mock_launch.call_args[0][0]
+        # Ctrl+Shift+V = 29, 42, 47
+        assert "42:1" in cmd  # LShift pressed
 
     def test_type_text_clipboard_wayland_clears_on_no_prior(self):
         wl_proc = self._make_wl_popen_mock()
@@ -842,6 +860,7 @@ class TestClipboardMode:
              patch("subprocess.Popen", return_value=wl_proc), \
              patch.object(ptt, "_clipboard_clear") as mock_clear, \
              patch.object(ptt, "_launch_typing_proc", return_value=0), \
+             patch.object(ptt, "_is_terminal_focused", return_value=False), \
              patch("time.sleep"):
             ptt._type_text_clipboard("hello")
         mock_clear.assert_called_once()
@@ -850,6 +869,7 @@ class TestClipboardMode:
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
              patch.object(ptt, "_clipboard_save", return_value=None), \
              patch("subprocess.Popen", side_effect=FileNotFoundError), \
+             patch.object(ptt, "_is_terminal_focused", return_value=False), \
              patch.object(ptt, "_launch_typing_proc") as mock_launch:
             ptt._type_text_clipboard("hello")
         mock_launch.assert_not_called()
@@ -859,12 +879,37 @@ class TestClipboardMode:
              patch.object(ptt, "_clipboard_save", return_value=b"old"), \
              patch.object(ptt, "_clipboard_write", return_value=True) as mock_write, \
              patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch.object(ptt, "_is_terminal_focused", return_value=False), \
              patch("time.sleep"):
             ptt._type_text_clipboard("hello")
         cmd = mock_launch.call_args[0][0]
         assert cmd[0] == "xdotool"
         assert "ctrl+v" in cmd
+        assert "shift" not in cmd
         assert mock_write.call_count == 2  # write text + restore
+
+    def test_type_text_clipboard_x11_terminal_uses_ctrl_shift_v(self):
+        with patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}), \
+             patch.object(ptt, "_clipboard_save", return_value=None), \
+             patch.object(ptt, "_clipboard_write", return_value=True), \
+             patch.object(ptt, "_clipboard_clear"), \
+             patch.object(ptt, "_launch_typing_proc", return_value=0) as mock_launch, \
+             patch.object(ptt, "_is_terminal_focused", return_value=True), \
+             patch("time.sleep"):
+            ptt._type_text_clipboard("hello")
+        cmd = mock_launch.call_args[0][0]
+        assert "ctrl+shift+v" in cmd
+
+    def test_is_terminal_focused_known_terminals(self):
+        for app_id in ["org.gnome.Terminal", "org.gnome.Console", "foot", "kitty"]:
+            with patch.object(ptt, "get_focused_app", return_value=(app_id, "")):
+                assert ptt._is_terminal_focused()
+            with patch.object(ptt, "get_focused_app", return_value=(app_id + ".desktop", "")):
+                assert ptt._is_terminal_focused()
+
+    def test_is_terminal_focused_non_terminal(self):
+        with patch.object(ptt, "get_focused_app", return_value=("org.mozilla.Firefox", "")):
+            assert not ptt._is_terminal_focused()
 
     def test_clipboard_save_wayland_success(self):
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "wayland"}), \
