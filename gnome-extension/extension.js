@@ -37,6 +37,7 @@ const HOTKEYS = [
   'KEY_LEFTSHIFT',
   'KEY_SCROLLLOCK',
   'KEY_PAUSE',
+  'KEY_F23',
   'KEY_VOICECOMMAND',
   'KEY_ASSISTANT'
 ]
@@ -981,7 +982,8 @@ const WhisperIndicator = GObject.registerClass(
 
     _formatHotkey (key) {
       const labels = {
-        KEY_VOICECOMMAND: 'Copilot / Voice Command',
+        KEY_F23: 'Copilot button (F23)',
+        KEY_VOICECOMMAND: 'Voice Command',
         KEY_ASSISTANT: 'Assistant (AI key)'
       }
       if (labels[key]) return labels[key]
