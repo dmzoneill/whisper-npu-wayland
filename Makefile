@@ -274,7 +274,7 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 		'Environment=XDG_SESSION_TYPE=wayland' \
 		'Environment=YDOTOOL_SOCKET=/tmp/.ydotool_socket' \
 		'ExecStartPre=/bin/bash -c '"'"'i=0; while [ $$i -lt 60 ]; do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && exit 0; sleep 1; i=$$((i+1)); done; echo whisper-server not ready after 60s; exit 1'"'"'' \
-		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino' \
+		'ExecStart=/usr/bin/sg input -c '"'"'$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino'"'"'' \
 		'Restart=on-failure' \
 		'RestartSec=3' \
 		'' \
