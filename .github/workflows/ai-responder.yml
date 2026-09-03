@@ -35,6 +35,8 @@ jobs:
 
       - name: Run AI responder
         env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          OPENCODE_MODEL: ${{ secrets.OPENCODE_MODEL || 'big-pickle' }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcloud-credentials.json
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
