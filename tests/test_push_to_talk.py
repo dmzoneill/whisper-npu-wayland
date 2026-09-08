@@ -13,7 +13,6 @@ import wave
 from unittest.mock import (
     AsyncMock,
     MagicMock,
-    call,
     patch,
 )
 

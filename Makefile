@@ -13,7 +13,7 @@ WHISPER_CPP_DEVICE ?= NPU
 SYSTEM_PKGS := ydotool pipewire-pulseaudio pipewire-utils pulseaudio-utils \
                wtype wl-clipboard xdotool \
                git git-lfs curl \
-               cmake gcc-c++ \
+               cmake gcc-c++ python3-devel \
                pciutils libnotify
 
 WHISPER_CPP_VERSION ?= v1.7.4
@@ -61,7 +61,7 @@ help: ## Show available targets
 # Full install
 # ----------------------------------------------------------------------------
 
-install: install-python install-system install-whisper-cpp install-permissions install-models install-services extension-install enable start ## Install everything
+install: install-system install-python install-whisper-cpp install-permissions install-models install-services extension-install enable start ## Install everything
 
 # ----------------------------------------------------------------------------
 # Python dependencies
@@ -274,7 +274,7 @@ $(SYSTEMD_DIR)/push-to-talk.service:
 		'Environment=XDG_SESSION_TYPE=wayland' \
 		'Environment=YDOTOOL_SOCKET=/tmp/.ydotool_socket' \
 		'ExecStartPre=/bin/bash -c '"'"'i=0; while [ $$i -lt 60 ]; do curl -sf http://127.0.0.1:5000/health >/dev/null 2>&1 && exit 0; sleep 1; i=$$((i+1)); done; echo whisper-server not ready after 60s; exit 1'"'"'' \
-		'ExecStart=$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino' \
+		'ExecStart=/usr/bin/sg input -c '"'"'$(PYTHON) $(PROJECT_DIR)/push-to-talk.py --key KEY_RIGHTCTRL --backend openvino'"'"'' \
 		'Restart=on-failure' \
 		'RestartSec=3' \
 		'' \
@@ -391,6 +391,7 @@ extension-install: ## Install GNOME extension (symlink + schemas + pre-enable)
 	glib-compile-schemas $(EXTENSION_DIR)/schemas/
 	cp $(EXTENSION_DIR)/schemas/*.gschema.xml $(SCHEMA_DIR)/
 	glib-compile-schemas $(SCHEMA_DIR)/
+	mkdir -p $(dir $(EXTENSION_INSTALL))
 	ln -snf $(EXTENSION_DIR) $(EXTENSION_INSTALL)
 	@CURRENT=$$(gsettings get org.gnome.shell enabled-extensions 2>/dev/null | tr -d "[]'" | tr ',' '\n' | grep -v '^\s*$$'); \
 	if echo "$$CURRENT" | grep -qF "$(EXTENSION_UUID)"; then \
